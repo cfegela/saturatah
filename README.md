@@ -11,7 +11,7 @@ Saturatah focuses on an uncompromised, distraction-free photo viewing experience
 - **Minimalist Photo Grid**:
   - Displays all local device photos sorted chronologically in a 3-column square thumbnail grid.
   - Asynchronous thumbnail loading and memory caching powered by Coil.
-  - Photo count indicator and quick refresh option.
+  - Clean edge-to-edge layout with zero header distractions.
 
 - **Full-Screen Photo Viewer**:
   - Pure edge-to-edge viewing without distracting overlays or metadata bars.
