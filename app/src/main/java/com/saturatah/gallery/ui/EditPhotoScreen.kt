@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,9 +24,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.RotateRight
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,6 +52,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -63,6 +71,10 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
 
+enum class ActiveEditTool {
+    NONE, COLOR, CROP
+}
+
 private enum class DragHandle {
     NONE, CENTER, TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT, TOP, BOTTOM, LEFT, RIGHT
 }
@@ -71,11 +83,26 @@ private enum class DragHandle {
 fun EditPhotoScreen(
     photo: Photo,
     onCancel: () -> Unit,
-    onSave: suspend (rotationDegrees: Int, cropLeft: Float, cropTop: Float, cropRight: Float, cropBottom: Float) -> Boolean,
+    onSave: suspend (
+        rotationDegrees: Int,
+        cropLeft: Float,
+        cropTop: Float,
+        cropRight: Float,
+        cropBottom: Float,
+        saturationLevel: Int
+    ) -> Boolean,
     loadBitmap: suspend (Photo) -> Bitmap?,
     modifier: Modifier = Modifier
 ) {
-    BackHandler(onBack = onCancel)
+    var activeTool by remember { mutableStateOf(ActiveEditTool.NONE) }
+
+    BackHandler {
+        if (activeTool != ActiveEditTool.NONE) {
+            activeTool = ActiveEditTool.NONE
+        } else {
+            onCancel()
+        }
+    }
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -86,6 +113,7 @@ fun EditPhotoScreen(
     var isSaving by remember { mutableStateOf(false) }
 
     var rotationDegrees by remember { mutableIntStateOf(0) }
+    var saturationLevel by remember { mutableIntStateOf(0) } // Discrete 0 to 10
 
     // Normalized freeform crop box (0.0 .. 1.0) relative to rotated bitmap bounds
     var cropLeft by remember { mutableFloatStateOf(0f) }
@@ -110,6 +138,17 @@ fun EditPhotoScreen(
         }
     }
 
+    // Real-time GPU color filter for saturation adjustment
+    val saturationColorFilter = remember(saturationLevel) {
+        if (saturationLevel > 0) {
+            val factor = 1.0f + saturationLevel * 0.15f
+            val cm = ColorMatrix().apply { setToSaturation(factor) }
+            ColorFilter.colorMatrix(cm)
+        } else {
+            null
+        }
+    }
+
     fun handleRotate() {
         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
         rotationDegrees = (rotationDegrees + 90) % 360
@@ -122,10 +161,12 @@ fun EditPhotoScreen(
     fun handleReset() {
         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
         rotationDegrees = 0
+        saturationLevel = 0
         cropLeft = 0f
         cropTop = 0f
         cropRight = 1f
         cropBottom = 1f
+        activeTool = ActiveEditTool.NONE
     }
 
     fun handleSave() {
@@ -134,7 +175,7 @@ fun EditPhotoScreen(
         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
 
         coroutineScope.launch {
-            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom)
+            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel)
             if (success) {
                 Toast.makeText(context, "Photo saved", Toast.LENGTH_SHORT).show()
             } else {
@@ -173,7 +214,7 @@ fun EditPhotoScreen(
             }
 
             Text(
-                text = "Crop & Rotate",
+                text = "Edit Photo",
                 color = Color.White,
                 fontSize = 18.sp,
                 style = MaterialTheme.typography.titleMedium
@@ -212,7 +253,7 @@ fun EditPhotoScreen(
                         )
                     } else {
                         Icon(
-                            imageVector = Icons.Default.Check,
+                            imageVector = Icons.Default.Save,
                             contentDescription = "Save",
                             tint = Color.White
                         )
@@ -221,7 +262,7 @@ fun EditPhotoScreen(
             }
         }
 
-        // Center preview and interactive freeform crop overlay
+        // Center preview and interactive crop overlay
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -262,8 +303,8 @@ fun EditPhotoScreen(
                     val touchRadius = with(density) { 36.dp.toPx() }
                     var activeHandle by remember { mutableStateOf(DragHandle.NONE) }
 
-                    Canvas(
-                        modifier = Modifier
+                    val canvasModifier = if (activeTool == ActiveEditTool.CROP) {
+                        Modifier
                             .fillMaxSize()
                             .pointerInput(imgDisplayW, imgDisplayH) {
                                 detectDragGestures(
@@ -358,143 +399,347 @@ fun EditPhotoScreen(
                                     }
                                 )
                             }
-                    ) {
-                        // 1. Draw image
-                        drawImage(
-                            image = composeBitmap,
-                            dstOffset = IntOffset(imgOffsetX.toInt(), imgOffsetY.toInt()),
-                            dstSize = IntSize(imgDisplayW.toInt(), imgDisplayH.toInt())
-                        )
+                    } else {
+                        Modifier.fillMaxSize()
+                    }
 
-                        val cLeft = imgOffsetX + cropLeft * imgDisplayW
-                        val cTop = imgOffsetY + cropTop * imgDisplayH
-                        val cRight = imgOffsetX + cropRight * imgDisplayW
-                        val cBottom = imgOffsetY + cropBottom * imgDisplayH
-                        val cWidth = cRight - cLeft
-                        val cHeight = cBottom - cTop
+                    Canvas(modifier = canvasModifier) {
+                        if (activeTool == ActiveEditTool.CROP) {
+                            // In CROP mode: draw full image with interactive crop overlay
+                            drawImage(
+                                image = composeBitmap,
+                                dstOffset = IntOffset(imgOffsetX.toInt(), imgOffsetY.toInt()),
+                                dstSize = IntSize(imgDisplayW.toInt(), imgDisplayH.toInt()),
+                                colorFilter = saturationColorFilter
+                            )
 
-                        val dimColor = Color.Black.copy(alpha = 0.65f)
+                            val cLeft = imgOffsetX + cropLeft * imgDisplayW
+                            val cTop = imgOffsetY + cropTop * imgDisplayH
+                            val cRight = imgOffsetX + cropRight * imgDisplayW
+                            val cBottom = imgOffsetY + cropBottom * imgDisplayH
+                            val cWidth = cRight - cLeft
+                            val cHeight = cBottom - cTop
 
-                        // 2. Draw dimmed overlay around crop box
-                        // Top rectangle
-                        drawRect(
-                            color = dimColor,
-                            topLeft = Offset(0f, 0f),
-                            size = Size(size.width, cTop)
-                        )
-                        // Bottom rectangle
-                        drawRect(
-                            color = dimColor,
-                            topLeft = Offset(0f, cBottom),
-                            size = Size(size.width, size.height - cBottom)
-                        )
-                        // Left rectangle
-                        drawRect(
-                            color = dimColor,
-                            topLeft = Offset(0f, cTop),
-                            size = Size(cLeft, cHeight)
-                        )
-                        // Right rectangle
-                        drawRect(
-                            color = dimColor,
-                            topLeft = Offset(cRight, cTop),
-                            size = Size(size.width - cRight, cHeight)
-                        )
+                            val dimColor = Color.Black.copy(alpha = 0.65f)
 
-                        // 3. Draw crop box outline
-                        drawRect(
-                            color = Color.White.copy(alpha = 0.85f),
-                            topLeft = Offset(cLeft, cTop),
-                            size = Size(cWidth, cHeight),
-                            style = Stroke(width = 1.5f.dp.toPx())
-                        )
+                            // Dimmed overlay outside crop box
+                            drawRect(
+                                color = dimColor,
+                                topLeft = Offset(0f, 0f),
+                                size = Size(size.width, cTop)
+                            )
+                            drawRect(
+                                color = dimColor,
+                                topLeft = Offset(0f, cBottom),
+                                size = Size(size.width, size.height - cBottom)
+                            )
+                            drawRect(
+                                color = dimColor,
+                                topLeft = Offset(0f, cTop),
+                                size = Size(cLeft, cHeight)
+                            )
+                            drawRect(
+                                color = dimColor,
+                                topLeft = Offset(cRight, cTop),
+                                size = Size(size.width - cRight, cHeight)
+                            )
 
-                        // 4. Draw 3x3 grid lines
-                        val gridStroke = Stroke(width = 1f.dp.toPx())
-                        val gridColor = Color.White.copy(alpha = 0.35f)
+                            // Crop box outline
+                            drawRect(
+                                color = Color.White.copy(alpha = 0.85f),
+                                topLeft = Offset(cLeft, cTop),
+                                size = Size(cWidth, cHeight),
+                                style = Stroke(width = 1.5f.dp.toPx())
+                            )
 
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(cLeft + cWidth / 3f, cTop),
-                            end = Offset(cLeft + cWidth / 3f, cBottom),
-                            strokeWidth = gridStroke.width
-                        )
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(cLeft + 2 * cWidth / 3f, cTop),
-                            end = Offset(cLeft + 2 * cWidth / 3f, cBottom),
-                            strokeWidth = gridStroke.width
-                        )
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(cLeft, cTop + cHeight / 3f),
-                            end = Offset(cRight, cTop + cHeight / 3f),
-                            strokeWidth = gridStroke.width
-                        )
-                        drawLine(
-                            color = gridColor,
-                            start = Offset(cLeft, cTop + 2 * cHeight / 3f),
-                            end = Offset(cRight, cTop + 2 * cHeight / 3f),
-                            strokeWidth = gridStroke.width
-                        )
+                            // 3x3 grid lines
+                            val gridStroke = Stroke(width = 1f.dp.toPx())
+                            val gridColor = Color.White.copy(alpha = 0.35f)
 
-                        // 5. Draw corner L-handles
-                        val cornerLen = 18.dp.toPx()
-                        val cornerStroke = 3.5f.dp.toPx()
-                        val cornerColor = Color.White
+                            drawLine(
+                                color = gridColor,
+                                start = Offset(cLeft + cWidth / 3f, cTop),
+                                end = Offset(cLeft + cWidth / 3f, cBottom),
+                                strokeWidth = gridStroke.width
+                            )
+                            drawLine(
+                                color = gridColor,
+                                start = Offset(cLeft + 2 * cWidth / 3f, cTop),
+                                end = Offset(cLeft + 2 * cWidth / 3f, cBottom),
+                                strokeWidth = gridStroke.width
+                            )
+                            drawLine(
+                                color = gridColor,
+                                start = Offset(cLeft, cTop + cHeight / 3f),
+                                end = Offset(cRight, cTop + cHeight / 3f),
+                                strokeWidth = gridStroke.width
+                            )
+                            drawLine(
+                                color = gridColor,
+                                start = Offset(cLeft, cTop + 2 * cHeight / 3f),
+                                end = Offset(cRight, cTop + 2 * cHeight / 3f),
+                                strokeWidth = gridStroke.width
+                            )
 
-                        // Top-Left
-                        drawLine(cornerColor, Offset(cLeft, cTop), Offset(cLeft + cornerLen, cTop), cornerStroke)
-                        drawLine(cornerColor, Offset(cLeft, cTop), Offset(cLeft, cTop + cornerLen), cornerStroke)
+                            // Corner L-handles
+                            val cornerLen = 18.dp.toPx()
+                            val cornerStroke = 3.5f.dp.toPx()
+                            val cornerColor = Color.White
 
-                        // Top-Right
-                        drawLine(cornerColor, Offset(cRight, cTop), Offset(cRight - cornerLen, cTop), cornerStroke)
-                        drawLine(cornerColor, Offset(cRight, cTop), Offset(cRight, cTop + cornerLen), cornerStroke)
+                            // Top-Left
+                            drawLine(cornerColor, Offset(cLeft, cTop), Offset(cLeft + cornerLen, cTop), cornerStroke)
+                            drawLine(cornerColor, Offset(cLeft, cTop), Offset(cLeft, cTop + cornerLen), cornerStroke)
 
-                        // Bottom-Left
-                        drawLine(cornerColor, Offset(cLeft, cBottom), Offset(cLeft + cornerLen, cBottom), cornerStroke)
-                        drawLine(cornerColor, Offset(cLeft, cBottom), Offset(cLeft, cBottom - cornerLen), cornerStroke)
+                            // Top-Right
+                            drawLine(cornerColor, Offset(cRight, cTop), Offset(cRight - cornerLen, cTop), cornerStroke)
+                            drawLine(cornerColor, Offset(cRight, cTop), Offset(cRight, cTop + cornerLen), cornerStroke)
 
-                        // Bottom-Right
-                        drawLine(cornerColor, Offset(cRight, cBottom), Offset(cRight - cornerLen, cBottom), cornerStroke)
-                        drawLine(cornerColor, Offset(cRight, cBottom), Offset(cRight, cBottom - cornerLen), cornerStroke)
+                            // Bottom-Left
+                            drawLine(cornerColor, Offset(cLeft, cBottom), Offset(cLeft + cornerLen, cBottom), cornerStroke)
+                            drawLine(cornerColor, Offset(cLeft, cBottom), Offset(cLeft, cBottom - cornerLen), cornerStroke)
+
+                            // Bottom-Right
+                            drawLine(cornerColor, Offset(cRight, cBottom), Offset(cRight - cornerLen, cBottom), cornerStroke)
+                            drawLine(cornerColor, Offset(cRight, cBottom), Offset(cRight, cBottom - cornerLen), cornerStroke)
+                        } else {
+                            // In NONE or COLOR mode: draw cropped image cleanly fitted
+                            val srcL = (cropLeft * bmp.width).toInt().coerceIn(0, bmp.width - 1)
+                            val srcT = (cropTop * bmp.height).toInt().coerceIn(0, bmp.height - 1)
+                            val srcR = (cropRight * bmp.width).toInt().coerceIn(srcL + 1, bmp.width)
+                            val srcB = (cropBottom * bmp.height).toInt().coerceIn(srcT + 1, bmp.height)
+                            val srcW = srcR - srcL
+                            val srcH = srcB - srcT
+
+                            val croppedScale = minOf(availableWidth / srcW.toFloat(), availableHeight / srcH.toFloat())
+                            val dispW = srcW.toFloat() * croppedScale
+                            val dispH = srcH.toFloat() * croppedScale
+                            val offX = (viewWidthPx - dispW) / 2f
+                            val offY = (viewHeightPx - dispH) / 2f
+
+                            drawImage(
+                                image = composeBitmap,
+                                srcOffset = IntOffset(srcL, srcT),
+                                srcSize = IntSize(srcW, srcH),
+                                dstOffset = IntOffset(offX.toInt(), offY.toInt()),
+                                dstSize = IntSize(dispW.toInt(), dispH.toInt()),
+                                colorFilter = saturationColorFilter
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // Bottom editing controls - clean Rotate button
-        Row(
+        // Bottom editing controls - Menu or Active Tool Controls
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(Color.Black.copy(alpha = 0.85f))
                 .navigationBarsPadding()
-                .padding(vertical = 16.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
+                .padding(vertical = 12.dp, horizontal = 16.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Surface(
-                onClick = { handleRotate() },
-                shape = RoundedCornerShape(20.dp),
-                color = Color.White.copy(alpha = 0.12f),
-                modifier = Modifier.height(40.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.RotateRight,
-                        contentDescription = "Rotate 90°",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        text = "Rotate 90°",
-                        color = Color.White,
-                        fontSize = 14.sp
-                    )
+            when (activeTool) {
+                ActiveEditTool.NONE -> {
+                    // Main Menu Bar: Color and Crop buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            onClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                activeTool = ActiveEditTool.COLOR
+                            },
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White.copy(alpha = 0.12f),
+                            modifier = Modifier.height(44.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 24.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Palette,
+                                    contentDescription = "Color",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "Color",
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                activeTool = ActiveEditTool.CROP
+                            },
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White.copy(alpha = 0.12f),
+                            modifier = Modifier.height(44.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 24.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Crop,
+                                    contentDescription = "Crop",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "Crop",
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+                    }
+                }
+
+                ActiveEditTool.COLOR -> {
+                    // Color Stepper with Checkmark button to return to menu
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Spacer(modifier = Modifier.size(40.dp))
+
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White.copy(alpha = 0.12f),
+                            modifier = Modifier.height(42.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        if (saturationLevel > 0) {
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            saturationLevel--
+                                        }
+                                    },
+                                    enabled = saturationLevel > 0,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Remove,
+                                        contentDescription = "Decrease color",
+                                        tint = if (saturationLevel > 0) Color.White else Color.White.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                Text(
+                                    text = if (saturationLevel == 0) "Color: 0" else "Color: +$saturationLevel",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                )
+
+                                IconButton(
+                                    onClick = {
+                                        if (saturationLevel < 10) {
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            saturationLevel++
+                                        }
+                                    },
+                                    enabled = saturationLevel < 10,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = "Increase color",
+                                        tint = if (saturationLevel < 10) Color.White else Color.White.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                activeTool = ActiveEditTool.NONE
+                            },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(Color.White.copy(alpha = 0.15f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Done",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+
+                ActiveEditTool.CROP -> {
+                    // Rotate 90° button with Checkmark button to return to menu
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Spacer(modifier = Modifier.size(40.dp))
+
+                        Surface(
+                            onClick = { handleRotate() },
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White.copy(alpha = 0.12f),
+                            modifier = Modifier.height(42.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.RotateRight,
+                                    contentDescription = "Rotate 90°",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "Rotate 90°",
+                                    color = Color.White,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                activeTool = ActiveEditTool.NONE
+                            },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(Color.White.copy(alpha = 0.15f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Done",
+                                tint = Color.White
+                            )
+                        }
+                    }
                 }
             }
         }

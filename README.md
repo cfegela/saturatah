@@ -18,10 +18,12 @@ Saturatah focuses on an uncompromised, distraction-free photo viewing experience
   - Smooth horizontal swipe navigation between photos (`HorizontalPager`).
   - Native gesture and hardware back button navigation back to the grid.
 
-- **Photo Editing (Crop & Rotate)**:
+- **Photo Editing (Color & Crop)**:
   - Edit icon on the full-screen photo viewer opens an AMOLED editing workspace.
-  - Interactive freeform crop window with draggable corner and edge handles.
-  - 90° clockwise rotation with instant preview updates.
+  - Bottom menu bar with dedicated **Color** and **Crop** tools, confirmed via checkmark.
+  - **Color**: Discrete 0 to +10 saturation adjustment stepper that strictly boosts color without reducing it, with GPU-accelerated real-time preview.
+  - **Crop & Rotate**: Interactive freeform crop window with draggable corner and edge handles, and 90° clockwise rotation.
+  - Top action bar featuring Cancel, Reset, and Save icons.
   - Saving replaces the original photo seamlessly by saving the edited image and removing the original.
 
 - **Long-Press Photo Deletion**:

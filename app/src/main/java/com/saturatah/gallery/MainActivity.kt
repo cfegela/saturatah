@@ -127,14 +127,15 @@ fun GalleryApp(
             EditPhotoScreen(
                 photo = currentEditPhoto,
                 onCancel = { viewModel.cancelEditing() },
-                onSave = { rotationDegrees, cropLeft, cropTop, cropRight, cropBottom ->
+                onSave = { rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel ->
                     viewModel.saveEditedPhoto(
                         photo = currentEditPhoto,
                         rotationDegrees = rotationDegrees,
                         cropLeft = cropLeft,
                         cropTop = cropTop,
                         cropRight = cropRight,
-                        cropBottom = cropBottom
+                        cropBottom = cropBottom,
+                        saturationLevel = saturationLevel
                     )
                 },
                 loadBitmap = { photo -> viewModel.loadPreviewBitmap(photo) }

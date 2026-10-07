@@ -5,7 +5,11 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
@@ -152,7 +156,8 @@ class PhotoRepository(private val context: Context) {
         cropLeft: Float,
         cropTop: Float,
         cropRight: Float,
-        cropBottom: Float
+        cropBottom: Float,
+        saturationLevel: Int = 0
     ): Uri? = withContext(Dispatchers.IO) {
         try {
             val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -217,9 +222,32 @@ class PhotoRepository(private val context: Context) {
             val pxWidth = ((clampedR - clampedL) * orientedBitmap.width).toInt().coerceIn(1, orientedBitmap.width - pxLeft)
             val pxHeight = ((clampedB - clampedT) * orientedBitmap.height).toInt().coerceIn(1, orientedBitmap.height - pxTop)
 
-            val finalBitmap = Bitmap.createBitmap(orientedBitmap, pxLeft, pxTop, pxWidth, pxHeight)
-            if (finalBitmap != orientedBitmap) {
+            val croppedBitmap = Bitmap.createBitmap(orientedBitmap, pxLeft, pxTop, pxWidth, pxHeight)
+            if (croppedBitmap != orientedBitmap) {
                 orientedBitmap.recycle()
+            }
+
+            val finalBitmap = if (saturationLevel > 0) {
+                val saturationFactor = 1.0f + saturationLevel * 0.15f
+                val satBitmap = Bitmap.createBitmap(
+                    croppedBitmap.width,
+                    croppedBitmap.height,
+                    croppedBitmap.config ?: Bitmap.Config.ARGB_8888
+                )
+                val canvas = Canvas(satBitmap)
+                val paint = Paint().apply {
+                    val colorMatrix = ColorMatrix().apply {
+                        setSaturation(saturationFactor)
+                    }
+                    colorFilter = ColorMatrixColorFilter(colorMatrix)
+                }
+                canvas.drawBitmap(croppedBitmap, 0f, 0f, paint)
+                if (satBitmap != croppedBitmap) {
+                    croppedBitmap.recycle()
+                }
+                satBitmap
+            } else {
+                croppedBitmap
             }
 
             val filename = "IMG_${System.currentTimeMillis()}_edit.jpg"
