@@ -140,12 +140,17 @@ fun EditPhotoScreen(
 
     // Real-time GPU color filter for saturation adjustment
     val saturationColorFilter = remember(saturationLevel) {
-        if (saturationLevel > 0) {
-            val factor = 1.0f + saturationLevel * 0.15f
-            val cm = ColorMatrix().apply { setToSaturation(factor) }
-            ColorFilter.colorMatrix(cm)
-        } else {
-            null
+        when {
+            saturationLevel == -1 -> {
+                val cm = ColorMatrix().apply { setToSaturation(0.0f) }
+                ColorFilter.colorMatrix(cm)
+            }
+            saturationLevel > 0 -> {
+                val factor = 1.0f + saturationLevel * 0.15f
+                val cm = ColorMatrix().apply { setToSaturation(factor) }
+                ColorFilter.colorMatrix(cm)
+            }
+            else -> null
         }
     }
 
@@ -628,24 +633,28 @@ fun EditPhotoScreen(
                             ) {
                                 IconButton(
                                     onClick = {
-                                        if (saturationLevel > 0) {
+                                        if (saturationLevel > -1) {
                                             hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                                             saturationLevel--
                                         }
                                     },
-                                    enabled = saturationLevel > 0,
+                                    enabled = saturationLevel > -1,
                                     modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Remove,
                                         contentDescription = "Decrease color",
-                                        tint = if (saturationLevel > 0) Color.White else Color.White.copy(alpha = 0.3f),
+                                        tint = if (saturationLevel > -1) Color.White else Color.White.copy(alpha = 0.3f),
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
 
                                 Text(
-                                    text = if (saturationLevel == 0) "Color: 0" else "Color: +$saturationLevel",
+                                    text = when {
+                                        saturationLevel == -1 -> "Color: B&W"
+                                        saturationLevel == 0 -> "Color: 0"
+                                        else -> "Color: +$saturationLevel"
+                                    },
                                     color = Color.White,
                                     fontSize = 14.sp,
                                     style = MaterialTheme.typography.labelLarge,

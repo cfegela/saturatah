@@ -227,8 +227,8 @@ class PhotoRepository(private val context: Context) {
                 orientedBitmap.recycle()
             }
 
-            val finalBitmap = if (saturationLevel > 0) {
-                val saturationFactor = 1.0f + saturationLevel * 0.15f
+            val finalBitmap = if (saturationLevel == -1 || saturationLevel > 0) {
+                val saturationFactor = if (saturationLevel == -1) 0.0f else 1.0f + saturationLevel * 0.15f
                 val satBitmap = Bitmap.createBitmap(
                     croppedBitmap.width,
                     croppedBitmap.height,
