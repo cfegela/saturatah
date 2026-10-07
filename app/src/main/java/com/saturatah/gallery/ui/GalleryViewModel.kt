@@ -77,7 +77,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         cropTop: Float,
         cropRight: Float,
         cropBottom: Float,
-        saturationLevel: Int = 0
+        saturationLevel: Int = 0,
+        lightLevel: Int = 0
     ): Boolean {
         val newUri = repository.saveCroppedAndRotatedPhoto(
             sourceUri = photo.uri,
@@ -86,7 +87,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             cropTop = cropTop,
             cropRight = cropRight,
             cropBottom = cropBottom,
-            saturationLevel = saturationLevel
+            saturationLevel = saturationLevel,
+            lightLevel = lightLevel
         )
         if (newUri != null) {
             repository.deletePhoto(photo)

@@ -157,7 +157,8 @@ class PhotoRepository(private val context: Context) {
         cropTop: Float,
         cropRight: Float,
         cropBottom: Float,
-        saturationLevel: Int = 0
+        saturationLevel: Int = 0,
+        lightLevel: Int = 0
     ): Uri? = withContext(Dispatchers.IO) {
         try {
             val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -227,25 +228,50 @@ class PhotoRepository(private val context: Context) {
                 orientedBitmap.recycle()
             }
 
-            val finalBitmap = if (saturationLevel == -1 || saturationLevel > 0) {
-                val saturationFactor = if (saturationLevel == -1) 0.0f else 1.0f + saturationLevel * 0.15f
-                val satBitmap = Bitmap.createBitmap(
-                    croppedBitmap.width,
-                    croppedBitmap.height,
-                    croppedBitmap.config ?: Bitmap.Config.ARGB_8888
-                )
-                val canvas = Canvas(satBitmap)
-                val paint = Paint().apply {
-                    val colorMatrix = ColorMatrix().apply {
-                        setSaturation(saturationFactor)
+            val finalBitmap = if (saturationLevel == -1 || saturationLevel > 0 || lightLevel > 0) {
+                val satMatrix = if (saturationLevel == -1 || saturationLevel > 0) {
+                    val saturationFactor = if (saturationLevel == -1) 0.0f else 1.0f + saturationLevel * 0.15f
+                    ColorMatrix().apply { setSaturation(saturationFactor) }
+                } else null
+
+                val contrastMatrix = if (lightLevel > 0) {
+                    val c = 1.0f + lightLevel * 0.06f
+                    val t = (1.0f - c) * 128.0f
+                    ColorMatrix(floatArrayOf(
+                        c, 0f, 0f, 0f, t,
+                        0f, c, 0f, 0f, t,
+                        0f, 0f, c, 0f, t,
+                        0f, 0f, 0f, 1f, 0f
+                    ))
+                } else null
+
+                val combinedMatrix = when {
+                    satMatrix != null && contrastMatrix != null -> {
+                        ColorMatrix().apply { setConcat(contrastMatrix, satMatrix) }
                     }
-                    colorFilter = ColorMatrixColorFilter(colorMatrix)
+                    satMatrix != null -> satMatrix
+                    contrastMatrix != null -> contrastMatrix
+                    else -> null
                 }
-                canvas.drawBitmap(croppedBitmap, 0f, 0f, paint)
-                if (satBitmap != croppedBitmap) {
-                    croppedBitmap.recycle()
+
+                if (combinedMatrix != null) {
+                    val adjBitmap = Bitmap.createBitmap(
+                        croppedBitmap.width,
+                        croppedBitmap.height,
+                        croppedBitmap.config ?: Bitmap.Config.ARGB_8888
+                    )
+                    val canvas = Canvas(adjBitmap)
+                    val paint = Paint().apply {
+                        colorFilter = ColorMatrixColorFilter(combinedMatrix)
+                    }
+                    canvas.drawBitmap(croppedBitmap, 0f, 0f, paint)
+                    if (adjBitmap != croppedBitmap) {
+                        croppedBitmap.recycle()
+                    }
+                    adjBitmap
+                } else {
+                    croppedBitmap
                 }
-                satBitmap
             } else {
                 croppedBitmap
             }
