@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Remove
@@ -35,6 +36,8 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -92,7 +95,8 @@ fun EditPhotoScreen(
         cropRight: Float,
         cropBottom: Float,
         saturationLevel: Int,
-        lightLevel: Int
+        lightLevel: Int,
+        saveAsCopy: Boolean
     ) -> Boolean,
     loadBitmap: suspend (Photo) -> Bitmap?,
     modifier: Modifier = Modifier
@@ -114,6 +118,8 @@ fun EditPhotoScreen(
     var sourceBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isLoadingBitmap by remember { mutableStateOf(true) }
     var isSaving by remember { mutableStateOf(false) }
+    var savingAsCopy by remember { mutableStateOf(false) }
+    var showSaveMenu by remember { mutableStateOf(false) }
 
     var rotationDegrees by remember { mutableIntStateOf(0) }
     var saturationLevel by remember { mutableIntStateOf(0) } // Discrete -1 (B&W), 0..10
@@ -199,17 +205,20 @@ fun EditPhotoScreen(
         activeTool = ActiveEditTool.NONE
     }
 
-    fun handleSave() {
+    fun handleSave(asCopy: Boolean) {
         if (isSaving) return
+        savingAsCopy = asCopy
         isSaving = true
         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
 
         coroutineScope.launch {
-            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel)
+            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel, asCopy)
             if (success) {
-                Toast.makeText(context, "Photo saved", Toast.LENGTH_SHORT).show()
+                val message = if (asCopy) "Copy saved" else "Photo saved"
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(context, "Failed to save photo", Toast.LENGTH_SHORT).show()
+                val message = if (asCopy) "Failed to save copy" else "Failed to save photo"
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                 isSaving = false
             }
         }
@@ -268,24 +277,78 @@ fun EditPhotoScreen(
                     )
                 }
 
-                IconButton(
-                    onClick = { handleSave() },
-                    enabled = !isSaving && !isLoadingBitmap,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                ) {
-                    if (isSaving) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = Color.White
+                Box {
+                    IconButton(
+                        onClick = {
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            showSaveMenu = true
+                        },
+                        enabled = !isSaving && !isLoadingBitmap,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                    ) {
+                        if (isSaving) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Save,
+                                contentDescription = "Save options",
+                                tint = Color.White
+                            )
+                        }
+                    }
+
+                    DropdownMenu(
+                        expanded = showSaveMenu,
+                        onDismissRequest = { showSaveMenu = false },
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = Color(0xFF222222),
+                        tonalElevation = 6.dp
+                    ) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "Save",
+                                    color = Color.White,
+                                    fontSize = 15.sp
+                                )
+                            },
+                            onClick = {
+                                showSaveMenu = false
+                                handleSave(asCopy = false)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Save,
+                                    contentDescription = null,
+                                    tint = Color.White
+                                )
+                            }
                         )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.Save,
-                            contentDescription = "Save",
-                            tint = Color.White
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "Save as copy",
+                                    color = Color.White,
+                                    fontSize = 15.sp
+                                )
+                            },
+                            onClick = {
+                                showSaveMenu = false
+                                handleSave(asCopy = true)
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.ContentCopy,
+                                    contentDescription = null,
+                                    tint = Color.White
+                                )
+                            }
                         )
                     }
                 }
