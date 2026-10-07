@@ -155,8 +155,22 @@ fun EditPhotoScreen(
         if (!hasSat && !hasLight) return@remember null
 
         val satMatrix = if (hasSat) {
-            val satFactor = if (saturationLevel == -1) 0.0f else 1.0f + saturationLevel * 0.15f
-            AndroidColorMatrix().apply { setSaturation(satFactor) }
+            if (saturationLevel == -1) {
+                AndroidColorMatrix().apply { setSaturation(0.0f) }
+            } else {
+                val sr = 1.0f + saturationLevel * 0.05f
+                val sg = 1.0f + saturationLevel * 0.20f
+                val sb = 1.0f + saturationLevel * 0.20f
+                val wr = 0.2126f
+                val wg = 0.7152f
+                val wb = 0.0722f
+                AndroidColorMatrix(floatArrayOf(
+                    (1f - sr) * wr + sr, (1f - sr) * wg,      (1f - sr) * wb,      0f, 0f,
+                    (1f - sg) * wr,      (1f - sg) * wg + sg, (1f - sg) * wb,      0f, 0f,
+                    (1f - sb) * wr,      (1f - sb) * wg,      (1f - sb) * wb + sb, 0f, 0f,
+                    0f,                  0f,                  0f,                  1f, 0f
+                ))
+            }
         } else null
 
         val contrastMatrix = if (hasLight) {
