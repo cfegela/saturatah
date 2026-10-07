@@ -18,9 +18,9 @@ Saturatah focuses on an uncompromised, distraction-free photo viewing experience
   - Smooth horizontal swipe navigation between photos (`HorizontalPager`).
   - Native gesture and hardware back button navigation back to the grid.
 
-- **Instant Photo Deletion**:
+- **Long-Press Photo Deletion**:
   - Floating action button in the upper right corner to delete the active photo.
-  - Zero confirmation prompts: tapping the delete icon instantly removes the photo from device storage and updates the gallery.
+  - Zero confirmation prompts: a 500ms long press removes the photo from device storage and updates the gallery, preventing accidental deletions.
   - Haptic feedback and confirmation toast.
 
 - **Modern Android Architecture**:
