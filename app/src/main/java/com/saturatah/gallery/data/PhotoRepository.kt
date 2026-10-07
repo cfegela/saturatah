@@ -1,11 +1,22 @@
 package com.saturatah.gallery.data
 
 import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import com.saturatah.gallery.model.Photo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.InputStream
 
 class PhotoRepository(private val context: Context) {
 
@@ -75,5 +86,191 @@ class PhotoRepository(private val context: Context) {
         }
 
         photos
+    }
+
+    suspend fun loadPreviewBitmap(uri: Uri, maxDimension: Int = 2048): Bitmap? = withContext(Dispatchers.IO) {
+        try {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, options)
+            }
+
+            var inSampleSize = 1
+            val maxSide = maxOf(options.outWidth, options.outHeight)
+            if (maxSide > maxDimension) {
+                while (maxSide / (inSampleSize * 2) >= maxDimension) {
+                    inSampleSize *= 2
+                }
+            }
+
+            val decodeOptions = BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val bitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, decodeOptions)
+            } ?: return@withContext null
+
+            val exifOrientation = try {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val exif = ExifInterface(stream)
+                    exif.getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                    )
+                } ?: ExifInterface.ORIENTATION_NORMAL
+            } catch (e: Exception) {
+                ExifInterface.ORIENTATION_NORMAL
+            }
+
+            val degrees = when (exifOrientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+
+            if (degrees != 0f) {
+                val matrix = Matrix().apply { postRotate(degrees) }
+                val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                if (rotated != bitmap) {
+                    bitmap.recycle()
+                }
+                rotated
+            } else {
+                bitmap
+            }
+        } catch (e: Exception) {
+            Log.e("PhotoRepository", "Failed to load preview bitmap", e)
+            null
+        }
+    }
+
+    suspend fun saveCroppedAndRotatedPhoto(
+        sourceUri: Uri,
+        rotationDegrees: Int,
+        cropLeft: Float,
+        cropTop: Float,
+        cropRight: Float,
+        cropBottom: Float
+    ): Uri? = withContext(Dispatchers.IO) {
+        try {
+            val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(sourceUri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, boundsOptions)
+            }
+
+            var inSampleSize = 1
+            val maxSide = maxOf(boundsOptions.outWidth, boundsOptions.outHeight)
+            while (maxSide / inSampleSize > 8192) {
+                inSampleSize *= 2
+            }
+
+            val decodeOptions = BitmapFactory.Options().apply {
+                this.inSampleSize = inSampleSize
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+
+            val baseBitmap = context.contentResolver.openInputStream(sourceUri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, decodeOptions)
+            } ?: return@withContext null
+
+            val exifOrientation = try {
+                context.contentResolver.openInputStream(sourceUri)?.use { stream ->
+                    val exif = ExifInterface(stream)
+                    exif.getAttributeInt(
+                        ExifInterface.TAG_ORIENTATION,
+                        ExifInterface.ORIENTATION_NORMAL
+                    )
+                } ?: ExifInterface.ORIENTATION_NORMAL
+            } catch (e: Exception) {
+                ExifInterface.ORIENTATION_NORMAL
+            }
+
+            val exifDegrees = when (exifOrientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                else -> 0
+            }
+
+            val totalDegrees = (exifDegrees + rotationDegrees) % 360
+
+            val orientedBitmap = if (totalDegrees != 0) {
+                val matrix = Matrix().apply { postRotate(totalDegrees.toFloat()) }
+                val rotated = Bitmap.createBitmap(baseBitmap, 0, 0, baseBitmap.width, baseBitmap.height, matrix, true)
+                if (rotated != baseBitmap) {
+                    baseBitmap.recycle()
+                }
+                rotated
+            } else {
+                baseBitmap
+            }
+
+            val clampedL = cropLeft.coerceIn(0f, 1f)
+            val clampedT = cropTop.coerceIn(0f, 1f)
+            val clampedR = cropRight.coerceIn(clampedL + 0.001f, 1f)
+            val clampedB = cropBottom.coerceIn(clampedT + 0.001f, 1f)
+
+            val pxLeft = (clampedL * orientedBitmap.width).toInt().coerceIn(0, orientedBitmap.width - 1)
+            val pxTop = (clampedT * orientedBitmap.height).toInt().coerceIn(0, orientedBitmap.height - 1)
+            val pxWidth = ((clampedR - clampedL) * orientedBitmap.width).toInt().coerceIn(1, orientedBitmap.width - pxLeft)
+            val pxHeight = ((clampedB - clampedT) * orientedBitmap.height).toInt().coerceIn(1, orientedBitmap.height - pxTop)
+
+            val finalBitmap = Bitmap.createBitmap(orientedBitmap, pxLeft, pxTop, pxWidth, pxHeight)
+            if (finalBitmap != orientedBitmap) {
+                orientedBitmap.recycle()
+            }
+
+            val filename = "IMG_${System.currentTimeMillis()}_edit.jpg"
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Saturatah")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+            }
+
+            val newUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            if (newUri != null) {
+                context.contentResolver.openOutputStream(newUri)?.use { out ->
+                    finalBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    context.contentResolver.update(newUri, contentValues, null, null)
+                }
+            }
+            finalBitmap.recycle()
+            newUri
+        } catch (e: Exception) {
+            Log.e("PhotoRepository", "Failed to save edited photo", e)
+            null
+        }
+    }
+
+    suspend fun deletePhoto(photo: Photo): Boolean = withContext(Dispatchers.IO) {
+        var fileRemoved = false
+        try {
+            if (!photo.filePath.isNullOrEmpty()) {
+                val file = File(photo.filePath)
+                if (file.exists()) {
+                    fileRemoved = file.delete()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("PhotoRepository", "Direct file deletion exception", e)
+        }
+
+        try {
+            val count = context.contentResolver.delete(photo.uri, null, null)
+            count > 0 || fileRemoved
+        } catch (e: Exception) {
+            Log.e("PhotoRepository", "ContentResolver deletion exception", e)
+            fileRemoved
+        }
     }
 }

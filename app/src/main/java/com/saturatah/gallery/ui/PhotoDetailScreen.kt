@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -61,6 +62,7 @@ fun PhotoDetailScreen(
     initialIndex: Int,
     onBack: () -> Unit,
     onPhotoDeleted: (Photo) -> Unit,
+    onEditPhoto: (Photo) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BackHandler(onBack = onBack)
@@ -178,34 +180,53 @@ fun PhotoDetailScreen(
             }
 
             if (currentPhoto != null) {
-                val viewConfiguration = LocalViewConfiguration.current
-                val customViewConfiguration = remember(viewConfiguration) {
-                    object : ViewConfiguration by viewConfiguration {
-                        override val longPressTimeoutMillis: Long = 500L
-                    }
-                }
-
-                CompositionLocalProvider(LocalViewConfiguration provides customViewConfiguration) {
-                    Box(
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = { onEditPhoto(currentPhoto) },
+                        enabled = !isDeleting,
                         modifier = Modifier
                             .size(40.dp)
                             .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                            .clip(CircleShape)
-                            .combinedClickable(
-                                enabled = !isDeleting,
-                                role = Role.Button,
-                                onClickLabel = null,
-                                onLongClickLabel = "Delete photo",
-                                onClick = {},
-                                onLongClick = { handleDelete() }
-                            ),
-                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete photo",
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit photo",
                             tint = Color.White
                         )
+                    }
+
+                    val viewConfiguration = LocalViewConfiguration.current
+                    val customViewConfiguration = remember(viewConfiguration) {
+                        object : ViewConfiguration by viewConfiguration {
+                            override val longPressTimeoutMillis: Long = 500L
+                        }
+                    }
+
+                    CompositionLocalProvider(LocalViewConfiguration provides customViewConfiguration) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                .clip(CircleShape)
+                                .combinedClickable(
+                                    enabled = !isDeleting,
+                                    role = Role.Button,
+                                    onClickLabel = null,
+                                    onLongClickLabel = "Delete photo",
+                                    onClick = {},
+                                    onLongClick = { handleDelete() }
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete photo",
+                                tint = Color.White
+                            )
+                        }
                     }
                 }
             }

@@ -18,6 +18,12 @@ Saturatah focuses on an uncompromised, distraction-free photo viewing experience
   - Smooth horizontal swipe navigation between photos (`HorizontalPager`).
   - Native gesture and hardware back button navigation back to the grid.
 
+- **Photo Editing (Crop & Rotate)**:
+  - Edit icon on the full-screen photo viewer opens an AMOLED editing workspace.
+  - Interactive freeform crop window with draggable corner and edge handles.
+  - 90° clockwise rotation with instant preview updates.
+  - Saving replaces the original photo seamlessly by saving the edited image and removing the original.
+
 - **Long-Press Photo Deletion**:
   - Floating action button in the upper right corner to delete the active photo.
   - Zero confirmation prompts: a 500ms long press removes the photo from device storage and updates the gallery, preventing accidental deletions.
@@ -62,7 +68,8 @@ saturatah/
 │           │   └── ui/
 │           │       ├── GalleryViewModel.kt  # StateFlow UI state & deletion management
 │           │       ├── GalleryScreen.kt     # Thumbnail grid & permission prompt UI
-│           │       ├── PhotoDetailScreen.kt # Full-size swiping viewer & delete button
+│           │       ├── PhotoDetailScreen.kt # Full-size swiping viewer & action buttons
+│           │       ├── EditPhotoScreen.kt   # Crop and rotate image editor
 │           │       └── theme/               # Colors, typography, and dark theme definitions
 │           └── res/                     # Vector icons, themes, and string resources
 ├── build.gradle.kts                     # Root build configuration

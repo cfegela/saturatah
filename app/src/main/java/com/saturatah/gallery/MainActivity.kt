@@ -22,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import com.saturatah.gallery.ui.EditPhotoScreen
 import com.saturatah.gallery.ui.GalleryScreen
 import com.saturatah.gallery.ui.GalleryUiState
 import com.saturatah.gallery.ui.GalleryViewModel
@@ -112,21 +113,40 @@ fun GalleryApp(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val selectedPhotoIndex by viewModel.selectedPhotoIndex.collectAsState()
+    val editingPhoto by viewModel.editingPhoto.collectAsState()
 
     AnimatedContent(
-        targetState = selectedPhotoIndex,
+        targetState = Triple(selectedPhotoIndex, editingPhoto != null, uiState is GalleryUiState.Success),
         transitionSpec = {
             fadeIn() togetherWith fadeOut()
         },
         label = "ScreenTransition"
-    ) { selectedIndex ->
-        if (selectedIndex != null && uiState is GalleryUiState.Success) {
+    ) { (selectedIndex, isEditing, isSuccess) ->
+        val currentEditPhoto = editingPhoto
+        if (isEditing && currentEditPhoto != null) {
+            EditPhotoScreen(
+                photo = currentEditPhoto,
+                onCancel = { viewModel.cancelEditing() },
+                onSave = { rotationDegrees, cropLeft, cropTop, cropRight, cropBottom ->
+                    viewModel.saveEditedPhoto(
+                        photo = currentEditPhoto,
+                        rotationDegrees = rotationDegrees,
+                        cropLeft = cropLeft,
+                        cropTop = cropTop,
+                        cropRight = cropRight,
+                        cropBottom = cropBottom
+                    )
+                },
+                loadBitmap = { photo -> viewModel.loadPreviewBitmap(photo) }
+            )
+        } else if (selectedIndex != null && isSuccess && uiState is GalleryUiState.Success) {
             val photos = (uiState as GalleryUiState.Success).photos
             PhotoDetailScreen(
                 photos = photos,
                 initialIndex = selectedIndex,
                 onBack = { viewModel.clearSelection() },
-                onPhotoDeleted = { photo -> viewModel.onPhotoDeleted(photo) }
+                onPhotoDeleted = { photo -> viewModel.onPhotoDeleted(photo) },
+                onEditPhoto = { photo -> viewModel.startEditing(photo) }
             )
         } else {
             GalleryScreen(

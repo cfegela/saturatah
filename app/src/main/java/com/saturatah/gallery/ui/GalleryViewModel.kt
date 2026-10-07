@@ -27,6 +27,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val _selectedPhotoIndex = MutableStateFlow<Int?>(null)
     val selectedPhotoIndex: StateFlow<Int?> = _selectedPhotoIndex.asStateFlow()
 
+    private val _editingPhoto = MutableStateFlow<Photo?>(null)
+    val editingPhoto: StateFlow<Photo?> = _editingPhoto.asStateFlow()
+
     fun onPermissionGranted() {
         loadPhotos()
     }
@@ -53,6 +56,47 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearSelection() {
         _selectedPhotoIndex.value = null
+    }
+
+    fun startEditing(photo: Photo) {
+        _editingPhoto.value = photo
+    }
+
+    fun cancelEditing() {
+        _editingPhoto.value = null
+    }
+
+    suspend fun loadPreviewBitmap(photo: Photo): android.graphics.Bitmap? {
+        return repository.loadPreviewBitmap(photo.uri)
+    }
+
+    suspend fun saveEditedPhoto(
+        photo: Photo,
+        rotationDegrees: Int,
+        cropLeft: Float,
+        cropTop: Float,
+        cropRight: Float,
+        cropBottom: Float
+    ): Boolean {
+        val newUri = repository.saveCroppedAndRotatedPhoto(
+            sourceUri = photo.uri,
+            rotationDegrees = rotationDegrees,
+            cropLeft = cropLeft,
+            cropTop = cropTop,
+            cropRight = cropRight,
+            cropBottom = cropBottom
+        )
+        if (newUri != null) {
+            repository.deletePhoto(photo)
+            val photos = repository.loadPhotos()
+            if (photos.isNotEmpty()) {
+                _uiState.value = GalleryUiState.Success(photos)
+                _selectedPhotoIndex.value = 0
+            }
+            _editingPhoto.value = null
+            return true
+        }
+        return false
     }
 
     fun onPhotoDeleted(photo: Photo) {
