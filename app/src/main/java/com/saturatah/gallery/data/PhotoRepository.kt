@@ -235,8 +235,8 @@ class PhotoRepository(private val context: Context) {
                 } else null
 
                 val contrastMatrix = if (lightLevel > 0) {
-                    val c = 1.0f + lightLevel * 0.06f
-                    val t = (1.0f - c) * 128.0f
+                    val c = 1.0f + lightLevel * 0.05f
+                    val t = (1.0f - c) * 35.0f
                     ColorMatrix(floatArrayOf(
                         c, 0f, 0f, 0f, t,
                         0f, c, 0f, 0f, t,
