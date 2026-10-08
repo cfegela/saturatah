@@ -96,6 +96,7 @@ fun EditPhotoScreen(
         cropBottom: Float,
         saturationLevel: Int,
         lightLevel: Int,
+        darkLevel: Int,
         saveAsCopy: Boolean
     ) -> Boolean,
     loadBitmap: suspend (Photo) -> Bitmap?,
@@ -124,6 +125,7 @@ fun EditPhotoScreen(
     var rotationDegrees by remember { mutableIntStateOf(0) }
     var saturationLevel by remember { mutableIntStateOf(0) } // Discrete -1 (B&W), 0..10
     var lightLevel by remember { mutableIntStateOf(0) } // Discrete 0 to 10
+    var darkLevel by remember { mutableIntStateOf(0) } // Discrete 0 to 10
 
     // Normalized freeform crop box (0.0 .. 1.0) relative to rotated bitmap bounds
     var cropLeft by remember { mutableFloatStateOf(0f) }
@@ -148,11 +150,12 @@ fun EditPhotoScreen(
         }
     }
 
-    // Real-time GPU color filter for saturation and light (dynamic range / contrast) adjustment
-    val combinedColorFilter = remember(saturationLevel, lightLevel) {
+    // Real-time GPU color filter for saturation, light, and darks adjustment
+    val combinedColorFilter = remember(saturationLevel, lightLevel, darkLevel) {
         val hasSat = saturationLevel == -1 || saturationLevel > 0
         val hasLight = lightLevel > 0
-        if (!hasSat && !hasLight) return@remember null
+        val hasDark = darkLevel > 0
+        if (!hasSat && !hasLight && !hasDark) return@remember null
 
         val satMatrix = if (hasSat) {
             if (saturationLevel == -1) {
@@ -173,7 +176,7 @@ fun EditPhotoScreen(
             }
         } else null
 
-        val contrastMatrix = if (hasLight) {
+        val lightMatrix = if (hasLight) {
             val c = 1.0f + lightLevel * 0.05f
             val t = (1.0f - c) * 35.0f
             AndroidColorMatrix(floatArrayOf(
@@ -184,12 +187,33 @@ fun EditPhotoScreen(
             ))
         } else null
 
+        val darksMatrix = if (hasDark) {
+            val b = darkLevel * 3.5f
+            val s = 255.0f / (255.0f - b)
+            val t = -s * b
+            AndroidColorMatrix(floatArrayOf(
+                s, 0f, 0f, 0f, t,
+                0f, s, 0f, 0f, t,
+                0f, 0f, s, 0f, t,
+                0f, 0f, 0f, 1f, 0f
+            ))
+        } else null
+
+        val toneMatrix = when {
+            lightMatrix != null && darksMatrix != null -> {
+                AndroidColorMatrix().apply { setConcat(lightMatrix, darksMatrix) }
+            }
+            lightMatrix != null -> lightMatrix
+            darksMatrix != null -> darksMatrix
+            else -> null
+        }
+
         val finalMatrix = when {
-            satMatrix != null && contrastMatrix != null -> {
-                AndroidColorMatrix().apply { setConcat(contrastMatrix, satMatrix) }
+            satMatrix != null && toneMatrix != null -> {
+                AndroidColorMatrix().apply { setConcat(toneMatrix, satMatrix) }
             }
             satMatrix != null -> satMatrix
-            contrastMatrix != null -> contrastMatrix
+            toneMatrix != null -> toneMatrix
             else -> null
         }
 
@@ -212,6 +236,7 @@ fun EditPhotoScreen(
         rotationDegrees = 0
         saturationLevel = 0
         lightLevel = 0
+        darkLevel = 0
         cropLeft = 0f
         cropTop = 0f
         cropRight = 1f
@@ -226,7 +251,7 @@ fun EditPhotoScreen(
         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
 
         coroutineScope.launch {
-            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel, asCopy)
+            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel, darkLevel, asCopy)
             if (success) {
                 val message = if (asCopy) "Copy saved" else "Photo saved"
                 Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -831,66 +856,127 @@ fun EditPhotoScreen(
                 }
 
                 ActiveEditTool.LIGHT -> {
-                    // Light Stepper with Checkmark button to return to menu
+                    // Light and Darks Steppers with Checkmark button to return to menu
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Spacer(modifier = Modifier.size(40.dp))
-
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = Color.White.copy(alpha = 0.12f),
-                            modifier = Modifier.height(42.dp)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier.padding(horizontal = 8.dp)
+                            // Light stepper pill
+                            Surface(
+                                shape = RoundedCornerShape(20.dp),
+                                color = Color.White.copy(alpha = 0.12f),
+                                modifier = Modifier.height(42.dp)
                             ) {
-                                IconButton(
-                                    onClick = {
-                                        if (lightLevel > 0) {
-                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            lightLevel--
-                                        }
-                                    },
-                                    enabled = lightLevel > 0,
-                                    modifier = Modifier.size(32.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.padding(horizontal = 6.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Remove,
-                                        contentDescription = "Decrease light",
-                                        tint = if (lightLevel > 0) Color.White else Color.White.copy(alpha = 0.3f),
-                                        modifier = Modifier.size(18.dp)
+                                    IconButton(
+                                        onClick = {
+                                            if (lightLevel > 0) {
+                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                lightLevel--
+                                            }
+                                        },
+                                        enabled = lightLevel > 0,
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Remove,
+                                            contentDescription = "Decrease light",
+                                            tint = if (lightLevel > 0) Color.White else Color.White.copy(alpha = 0.3f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+
+                                    Text(
+                                        text = if (lightLevel == 0) "Light: 0" else "Light: +$lightLevel",
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier.padding(horizontal = 2.dp)
                                     )
+
+                                    IconButton(
+                                        onClick = {
+                                            if (lightLevel < 10) {
+                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                lightLevel++
+                                            }
+                                        },
+                                        enabled = lightLevel < 10,
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = "Increase light",
+                                            tint = if (lightLevel < 10) Color.White else Color.White.copy(alpha = 0.3f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
+                            }
 
-                                Text(
-                                    text = if (lightLevel == 0) "Light: 0" else "Light: +$lightLevel",
-                                    color = Color.White,
-                                    fontSize = 14.sp,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                )
-
-                                IconButton(
-                                    onClick = {
-                                        if (lightLevel < 10) {
-                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            lightLevel++
-                                        }
-                                    },
-                                    enabled = lightLevel < 10,
-                                    modifier = Modifier.size(32.dp)
+                            // Darks stepper pill
+                            Surface(
+                                shape = RoundedCornerShape(20.dp),
+                                color = Color.White.copy(alpha = 0.12f),
+                                modifier = Modifier.height(42.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.padding(horizontal = 6.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = "Increase light",
-                                        tint = if (lightLevel < 10) Color.White else Color.White.copy(alpha = 0.3f),
-                                        modifier = Modifier.size(18.dp)
+                                    IconButton(
+                                        onClick = {
+                                            if (darkLevel > 0) {
+                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                darkLevel--
+                                            }
+                                        },
+                                        enabled = darkLevel > 0,
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Remove,
+                                            contentDescription = "Decrease darks",
+                                            tint = if (darkLevel > 0) Color.White else Color.White.copy(alpha = 0.3f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+
+                                    Text(
+                                        text = if (darkLevel == 0) "Darks: 0" else "Darks: +$darkLevel",
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier.padding(horizontal = 2.dp)
                                     )
+
+                                    IconButton(
+                                        onClick = {
+                                            if (darkLevel < 10) {
+                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                darkLevel++
+                                            }
+                                        },
+                                        enabled = darkLevel < 10,
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = "Increase darks",
+                                            tint = if (darkLevel < 10) Color.White else Color.White.copy(alpha = 0.3f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
                         }

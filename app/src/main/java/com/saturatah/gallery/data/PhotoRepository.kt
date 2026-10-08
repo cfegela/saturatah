@@ -159,6 +159,7 @@ class PhotoRepository(private val context: Context) {
         cropBottom: Float,
         saturationLevel: Int = 0,
         lightLevel: Int = 0,
+        darkLevel: Int = 0,
         originalPhoto: Photo? = null,
         saveAsCopy: Boolean = false
     ): Uri? = withContext(Dispatchers.IO) {
@@ -230,7 +231,7 @@ class PhotoRepository(private val context: Context) {
                 orientedBitmap.recycle()
             }
 
-            val finalBitmap = if (saturationLevel == -1 || saturationLevel > 0 || lightLevel > 0) {
+            val finalBitmap = if (saturationLevel == -1 || saturationLevel > 0 || lightLevel > 0 || darkLevel > 0) {
                 val satMatrix = if (saturationLevel == -1 || saturationLevel > 0) {
                     if (saturationLevel == -1) {
                         ColorMatrix().apply { setSaturation(0.0f) }
@@ -250,7 +251,7 @@ class PhotoRepository(private val context: Context) {
                     }
                 } else null
 
-                val contrastMatrix = if (lightLevel > 0) {
+                val lightMatrix = if (lightLevel > 0) {
                     val c = 1.0f + lightLevel * 0.05f
                     val t = (1.0f - c) * 35.0f
                     ColorMatrix(floatArrayOf(
@@ -261,12 +262,33 @@ class PhotoRepository(private val context: Context) {
                     ))
                 } else null
 
+                val darksMatrix = if (darkLevel > 0) {
+                    val b = darkLevel * 3.5f
+                    val s = 255.0f / (255.0f - b)
+                    val t = -s * b
+                    ColorMatrix(floatArrayOf(
+                        s, 0f, 0f, 0f, t,
+                        0f, s, 0f, 0f, t,
+                        0f, 0f, s, 0f, t,
+                        0f, 0f, 0f, 1f, 0f
+                    ))
+                } else null
+
+                val toneMatrix = when {
+                    lightMatrix != null && darksMatrix != null -> {
+                        ColorMatrix().apply { setConcat(lightMatrix, darksMatrix) }
+                    }
+                    lightMatrix != null -> lightMatrix
+                    darksMatrix != null -> darksMatrix
+                    else -> null
+                }
+
                 val combinedMatrix = when {
-                    satMatrix != null && contrastMatrix != null -> {
-                        ColorMatrix().apply { setConcat(contrastMatrix, satMatrix) }
+                    satMatrix != null && toneMatrix != null -> {
+                        ColorMatrix().apply { setConcat(toneMatrix, satMatrix) }
                     }
                     satMatrix != null -> satMatrix
-                    contrastMatrix != null -> contrastMatrix
+                    toneMatrix != null -> toneMatrix
                     else -> null
                 }
 
