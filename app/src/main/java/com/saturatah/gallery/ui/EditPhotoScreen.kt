@@ -1103,7 +1103,6 @@ fun EditPhotoScreen(
                 ActiveEditTool.FILTERS -> {
                     // Filters selection toolbar with Done button
                     val filters = listOf(
-                        PhotoFilter.VIVID,
                         PhotoFilter.WARM,
                         PhotoFilter.COOL,
                         PhotoFilter.NOIR,

@@ -4,7 +4,6 @@ import android.graphics.ColorMatrix
 
 enum class PhotoFilter(val id: String, val displayName: String) {
     NONE("none", "None"),
-    VIVID("vivid", "Vivid"),
     WARM("warm", "Warm"),
     COOL("cool", "Cool"),
     NOIR("noir", "Noir"),
@@ -13,19 +12,6 @@ enum class PhotoFilter(val id: String, val displayName: String) {
     fun getColorMatrix(): ColorMatrix? {
         return when (this) {
             NONE -> null
-            VIVID -> {
-                // Saturated and punchy contrast (Velvia style)
-                val satMatrix = ColorMatrix().apply { setSaturation(1.35f) }
-                val contrast = 1.10f
-                val t = (1f - contrast) * 128f * 0.4f
-                val contrastMatrix = ColorMatrix(floatArrayOf(
-                    contrast, 0f, 0f, 0f, t,
-                    0f, contrast, 0f, 0f, t,
-                    0f, 0f, contrast, 0f, t,
-                    0f, 0f, 0f, 1f, 0f
-                ))
-                ColorMatrix().apply { setConcat(contrastMatrix, satMatrix) }
-            }
             WARM -> {
                 // Golden hour / Portra warmth
                 ColorMatrix(floatArrayOf(
