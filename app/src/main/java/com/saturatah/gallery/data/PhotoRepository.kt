@@ -21,6 +21,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class PhotoRepository(private val context: Context) {
 
@@ -33,13 +36,15 @@ class PhotoRepository(private val context: Context) {
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.DISPLAY_NAME,
             MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.DATE_MODIFIED,
+            MediaStore.Images.Media.DATE_TAKEN,
             MediaStore.Images.Media.SIZE,
             MediaStore.Images.Media.WIDTH,
             MediaStore.Images.Media.HEIGHT,
             MediaStore.Images.Media.DATA
         )
 
-        val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
+        val sortOrder = "${MediaStore.Images.Media.DATE_TAKEN} DESC, ${MediaStore.Images.Media.DATE_ADDED} DESC"
 
         try {
             context.contentResolver.query(
@@ -51,7 +56,9 @@ class PhotoRepository(private val context: Context) {
             )?.use { cursor ->
                 val idColumn = cursor.getColumnIndex(MediaStore.Images.Media._ID)
                 val nameColumn = cursor.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME)
-                val dateColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATE_ADDED)
+                val dateAddedColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATE_ADDED)
+                val dateModifiedColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATE_MODIFIED)
+                val dateTakenColumn = cursor.getColumnIndex(MediaStore.Images.Media.DATE_TAKEN)
                 val sizeColumn = cursor.getColumnIndex(MediaStore.Images.Media.SIZE)
                 val widthColumn = cursor.getColumnIndex(MediaStore.Images.Media.WIDTH)
                 val heightColumn = cursor.getColumnIndex(MediaStore.Images.Media.HEIGHT)
@@ -60,7 +67,9 @@ class PhotoRepository(private val context: Context) {
                 while (cursor.moveToNext()) {
                     val id = if (idColumn >= 0) cursor.getLong(idColumn) else continue
                     val name = if (nameColumn >= 0) cursor.getString(nameColumn) ?: "Photo" else "Photo"
-                    val dateAdded = if (dateColumn >= 0) cursor.getLong(dateColumn) else 0L
+                    val dateAdded = if (dateAddedColumn >= 0) cursor.getLong(dateAddedColumn) else 0L
+                    val dateModified = if (dateModifiedColumn >= 0) cursor.getLong(dateModifiedColumn) else 0L
+                    val dateTaken = if (dateTakenColumn >= 0) cursor.getLong(dateTakenColumn) else 0L
                     val size = if (sizeColumn >= 0) cursor.getLong(sizeColumn) else 0L
                     val width = if (widthColumn >= 0) cursor.getInt(widthColumn) else 0
                     val height = if (heightColumn >= 0) cursor.getInt(heightColumn) else 0
@@ -77,6 +86,8 @@ class PhotoRepository(private val context: Context) {
                             uri = contentUri,
                             displayName = name,
                             dateAdded = dateAdded,
+                            dateTaken = dateTaken,
+                            dateModified = dateModified,
                             size = size,
                             width = width,
                             height = height,
@@ -87,6 +98,10 @@ class PhotoRepository(private val context: Context) {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+
+        photos.sortByDescending {
+            if (it.dateTaken > 0) it.dateTaken else it.dateAdded * 1000L
         }
 
         photos
@@ -314,6 +329,18 @@ class PhotoRepository(private val context: Context) {
                 croppedBitmap
             }
 
+            val targetDateTaken = when {
+                originalPhoto != null && originalPhoto.dateTaken > 0 -> originalPhoto.dateTaken
+                originalPhoto != null && originalPhoto.dateAdded > 0 -> originalPhoto.dateAdded * 1000L
+                else -> System.currentTimeMillis()
+            }
+            val targetDateModified = when {
+                originalPhoto != null && originalPhoto.dateModified > 0 -> originalPhoto.dateModified
+                originalPhoto != null && originalPhoto.dateTaken > 0 -> originalPhoto.dateTaken / 1000L
+                originalPhoto != null && originalPhoto.dateAdded > 0 -> originalPhoto.dateAdded
+                else -> System.currentTimeMillis() / 1000L
+            }
+
             val filename = if (originalPhoto != null) {
                 if (saveAsCopy) {
                     val originalName = originalPhoto.displayName
@@ -341,6 +368,65 @@ class PhotoRepository(private val context: Context) {
                     finalBitmap.recycle()
                 }
 
+                // Preserve EXIF metadata and capture timestamps from source
+                try {
+                    val srcStream = context.contentResolver.openInputStream(sourceUri)
+                    if (srcStream != null) {
+                        val srcExif = srcStream.use { ExifInterface(it) }
+                        val destExif = ExifInterface(tempFile.absolutePath)
+
+                        val exifTagsToCopy = listOf(
+                            ExifInterface.TAG_DATETIME,
+                            ExifInterface.TAG_DATETIME_ORIGINAL,
+                            ExifInterface.TAG_DATETIME_DIGITIZED,
+                            ExifInterface.TAG_SUBSEC_TIME,
+                            ExifInterface.TAG_SUBSEC_TIME_ORIGINAL,
+                            ExifInterface.TAG_SUBSEC_TIME_DIGITIZED,
+                            ExifInterface.TAG_OFFSET_TIME,
+                            ExifInterface.TAG_OFFSET_TIME_ORIGINAL,
+                            ExifInterface.TAG_OFFSET_TIME_DIGITIZED,
+                            ExifInterface.TAG_GPS_LATITUDE,
+                            ExifInterface.TAG_GPS_LATITUDE_REF,
+                            ExifInterface.TAG_GPS_LONGITUDE,
+                            ExifInterface.TAG_GPS_LONGITUDE_REF,
+                            ExifInterface.TAG_GPS_ALTITUDE,
+                            ExifInterface.TAG_GPS_ALTITUDE_REF,
+                            ExifInterface.TAG_GPS_DATESTAMP,
+                            ExifInterface.TAG_GPS_TIMESTAMP,
+                            ExifInterface.TAG_MAKE,
+                            ExifInterface.TAG_MODEL,
+                            ExifInterface.TAG_FOCAL_LENGTH,
+                            ExifInterface.TAG_F_NUMBER,
+                            ExifInterface.TAG_EXPOSURE_TIME,
+                            ExifInterface.TAG_ISO_SPEED_RATINGS,
+                            ExifInterface.TAG_FLASH,
+                            ExifInterface.TAG_WHITE_BALANCE
+                        )
+
+                        for (tag in exifTagsToCopy) {
+                            val value = srcExif.getAttribute(tag)
+                            if (value != null) {
+                                destExif.setAttribute(tag, value)
+                            }
+                        }
+
+                        if (destExif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL) == null) {
+                            val sdf = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US)
+                            val dateStr = sdf.format(Date(targetDateTaken))
+                            destExif.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, dateStr)
+                            destExif.setAttribute(ExifInterface.TAG_DATETIME, dateStr)
+                            destExif.setAttribute(ExifInterface.TAG_DATETIME_DIGITIZED, dateStr)
+                        }
+
+                        destExif.setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL.toString())
+                        destExif.saveAttributes()
+                    }
+                } catch (e: Exception) {
+                    Log.e("PhotoRepository", "Failed preserving EXIF metadata", e)
+                }
+
+                tempFile.setLastModified(targetDateModified * 1000L)
+
                 if (!saveAsCopy && originalPhoto != null) {
                     deletePhoto(originalPhoto)
                 }
@@ -348,7 +434,13 @@ class PhotoRepository(private val context: Context) {
                 val contentValues = ContentValues().apply {
                     put(MediaStore.Images.Media.DISPLAY_NAME, filename)
                     put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                    put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                    put(MediaStore.Images.Media.DATE_TAKEN, targetDateTaken)
+                    put(MediaStore.Images.Media.DATE_MODIFIED, targetDateModified)
+                    if (originalPhoto != null && originalPhoto.dateAdded > 0) {
+                        put(MediaStore.Images.Media.DATE_ADDED, originalPhoto.dateAdded)
+                    } else {
+                        put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                    }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/simplah")
                         put(MediaStore.Images.Media.IS_PENDING, 1)

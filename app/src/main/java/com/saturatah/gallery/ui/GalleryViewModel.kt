@@ -99,7 +99,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             val photos = repository.loadPhotos()
             if (photos.isNotEmpty()) {
                 _uiState.value = GalleryUiState.Success(photos)
-                _selectedPhotoIndex.value = 0
+                val newIndex = photos.indexOfFirst { it.uri == newUri }
+                _selectedPhotoIndex.value = if (newIndex >= 0) newIndex else 0
             }
             _editingPhoto.value = null
             return true

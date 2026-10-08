@@ -7,6 +7,8 @@ data class Photo(
     val uri: Uri,
     val displayName: String,
     val dateAdded: Long,
+    val dateTaken: Long = 0L,
+    val dateModified: Long = 0L,
     val size: Long,
     val width: Int = 0,
     val height: Int = 0,
