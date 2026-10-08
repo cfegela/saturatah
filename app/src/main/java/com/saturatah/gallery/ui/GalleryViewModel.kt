@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.saturatah.gallery.data.PhotoRepository
 import com.saturatah.gallery.model.Photo
+import com.saturatah.gallery.model.PhotoFilter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -80,6 +81,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         saturationLevel: Int = 0,
         lightLevel: Int = 0,
         darkLevel: Int = 0,
+        filter: PhotoFilter = PhotoFilter.NONE,
         saveAsCopy: Boolean = false
     ): Boolean {
         val newUri = repository.saveCroppedAndRotatedPhoto(
@@ -92,6 +94,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             saturationLevel = saturationLevel,
             lightLevel = lightLevel,
             darkLevel = darkLevel,
+            filter = filter,
             originalPhoto = photo,
             saveAsCopy = saveAsCopy
         )

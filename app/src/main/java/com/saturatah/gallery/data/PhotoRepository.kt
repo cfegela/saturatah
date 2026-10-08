@@ -17,6 +17,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import com.saturatah.gallery.model.Photo
+import com.saturatah.gallery.model.PhotoFilter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -175,6 +176,7 @@ class PhotoRepository(private val context: Context) {
         saturationLevel: Int = 0,
         lightLevel: Int = 0,
         darkLevel: Int = 0,
+        filter: PhotoFilter = PhotoFilter.NONE,
         originalPhoto: Photo? = null,
         saveAsCopy: Boolean = false
     ): Uri? = withContext(Dispatchers.IO) {
@@ -246,7 +248,10 @@ class PhotoRepository(private val context: Context) {
                 orientedBitmap.recycle()
             }
 
-            val finalBitmap = if (saturationLevel == -1 || saturationLevel > 0 || lightLevel > 0 || darkLevel > 0) {
+            val filterMatrix = filter.getColorMatrix()
+            val hasAdjustments = saturationLevel == -1 || saturationLevel > 0 || lightLevel > 0 || darkLevel > 0 || filterMatrix != null
+
+            val finalBitmap = if (hasAdjustments) {
                 val satMatrix = if (saturationLevel == -1 || saturationLevel > 0) {
                     if (saturationLevel == -1) {
                         ColorMatrix().apply { setSaturation(0.0f) }
@@ -298,12 +303,21 @@ class PhotoRepository(private val context: Context) {
                     else -> null
                 }
 
-                val combinedMatrix = when {
+                val adjustmentsMatrix = when {
                     satMatrix != null && toneMatrix != null -> {
                         ColorMatrix().apply { setConcat(toneMatrix, satMatrix) }
                     }
                     satMatrix != null -> satMatrix
                     toneMatrix != null -> toneMatrix
+                    else -> null
+                }
+
+                val combinedMatrix = when {
+                    adjustmentsMatrix != null && filterMatrix != null -> {
+                        ColorMatrix().apply { setConcat(adjustmentsMatrix, filterMatrix) }
+                    }
+                    adjustmentsMatrix != null -> adjustmentsMatrix
+                    filterMatrix != null -> filterMatrix
                     else -> null
                 }
 

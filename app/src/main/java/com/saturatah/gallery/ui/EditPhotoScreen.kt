@@ -8,6 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,11 +23,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -72,13 +75,14 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.saturatah.gallery.model.Photo
+import com.saturatah.gallery.model.PhotoFilter
 import com.saturatah.gallery.ui.theme.PureBlack
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.hypot
 
 enum class ActiveEditTool {
-    NONE, COLOR, LIGHT, CROP
+    NONE, COLOR, LIGHT, CROP, FILTERS
 }
 
 private enum class DragHandle {
@@ -98,6 +102,7 @@ fun EditPhotoScreen(
         saturationLevel: Int,
         lightLevel: Int,
         darkLevel: Int,
+        filter: PhotoFilter,
         saveAsCopy: Boolean
     ) -> Boolean,
     loadBitmap: suspend (Photo) -> Bitmap?,
@@ -127,6 +132,7 @@ fun EditPhotoScreen(
     var saturationLevel by remember { mutableIntStateOf(0) } // Discrete -1 (B&W), 0..10
     var lightLevel by remember { mutableIntStateOf(0) } // Discrete 0 to 10
     var darkLevel by remember { mutableIntStateOf(0) } // Discrete 0 to 10
+    var selectedFilter by remember { mutableStateOf(PhotoFilter.NONE) }
 
     // Normalized freeform crop box (0.0 .. 1.0) relative to rotated bitmap bounds
     var cropLeft by remember { mutableFloatStateOf(0f) }
@@ -151,12 +157,13 @@ fun EditPhotoScreen(
         }
     }
 
-    // Real-time GPU color filter for saturation, light, and darks adjustment
-    val combinedColorFilter = remember(saturationLevel, lightLevel, darkLevel) {
+    // Real-time GPU color filter for saturation, light, darks, and preset filters
+    val combinedColorFilter = remember(saturationLevel, lightLevel, darkLevel, selectedFilter) {
         val hasSat = saturationLevel == -1 || saturationLevel > 0
         val hasLight = lightLevel > 0
         val hasDark = darkLevel > 0
-        if (!hasSat && !hasLight && !hasDark) return@remember null
+        val filterMatrix = selectedFilter.getColorMatrix()
+        if (!hasSat && !hasLight && !hasDark && filterMatrix == null) return@remember null
 
         val satMatrix = if (hasSat) {
             if (saturationLevel == -1) {
@@ -209,12 +216,21 @@ fun EditPhotoScreen(
             else -> null
         }
 
-        val finalMatrix = when {
+        val adjustmentsMatrix = when {
             satMatrix != null && toneMatrix != null -> {
                 AndroidColorMatrix().apply { setConcat(toneMatrix, satMatrix) }
             }
             satMatrix != null -> satMatrix
             toneMatrix != null -> toneMatrix
+            else -> null
+        }
+
+        val finalMatrix = when {
+            adjustmentsMatrix != null && filterMatrix != null -> {
+                AndroidColorMatrix().apply { setConcat(adjustmentsMatrix, filterMatrix) }
+            }
+            adjustmentsMatrix != null -> adjustmentsMatrix
+            filterMatrix != null -> filterMatrix
             else -> null
         }
 
@@ -238,6 +254,7 @@ fun EditPhotoScreen(
         saturationLevel = 0
         lightLevel = 0
         darkLevel = 0
+        selectedFilter = PhotoFilter.NONE
         cropLeft = 0f
         cropTop = 0f
         cropRight = 1f
@@ -252,7 +269,7 @@ fun EditPhotoScreen(
         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
 
         coroutineScope.launch {
-            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel, darkLevel, asCopy)
+            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel, darkLevel, selectedFilter, asCopy)
             if (success) {
                 val message = if (asCopy) "Copy saved" else "Photo saved"
                 Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -669,12 +686,12 @@ fun EditPhotoScreen(
                 .fillMaxWidth()
                 .background(Color.Black.copy(alpha = 0.85f))
                 .navigationBarsPadding()
-                .padding(vertical = 12.dp, horizontal = 16.dp),
+                .padding(vertical = 12.dp, horizontal = 12.dp),
             contentAlignment = Alignment.Center
         ) {
             when (activeTool) {
                 ActiveEditTool.NONE -> {
-                    // Main Menu Bar: Crop, Color, and Light buttons
+                    // Main Menu Bar: Crop, Color, Light, and Filters buttons
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -687,23 +704,23 @@ fun EditPhotoScreen(
                             },
                             shape = RoundedCornerShape(20.dp),
                             color = Color.White.copy(alpha = 0.12f),
-                            modifier = Modifier.height(44.dp)
+                            modifier = Modifier.height(42.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 16.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Crop,
                                     contentDescription = "Crop",
                                     tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                                 Text(
                                     text = "Crop",
                                     color = Color.White,
-                                    fontSize = 15.sp,
+                                    fontSize = 13.sp,
                                     style = MaterialTheme.typography.labelLarge
                                 )
                             }
@@ -716,23 +733,23 @@ fun EditPhotoScreen(
                             },
                             shape = RoundedCornerShape(20.dp),
                             color = Color.White.copy(alpha = 0.12f),
-                            modifier = Modifier.height(44.dp)
+                            modifier = Modifier.height(42.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 16.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Palette,
                                     contentDescription = "Color",
                                     tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                                 Text(
                                     text = "Color",
                                     color = Color.White,
-                                    fontSize = 15.sp,
+                                    fontSize = 13.sp,
                                     style = MaterialTheme.typography.labelLarge
                                 )
                             }
@@ -745,23 +762,52 @@ fun EditPhotoScreen(
                             },
                             shape = RoundedCornerShape(20.dp),
                             color = Color.White.copy(alpha = 0.12f),
-                            modifier = Modifier.height(44.dp)
+                            modifier = Modifier.height(42.dp)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 16.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.WbSunny,
                                     contentDescription = "Light",
                                     tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                                 Text(
                                     text = "Light",
                                     color = Color.White,
-                                    fontSize = 15.sp,
+                                    fontSize = 13.sp,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                activeTool = ActiveEditTool.FILTERS
+                            },
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White.copy(alpha = 0.12f),
+                            modifier = Modifier.height(42.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = "Filters",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Filters",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
                                     style = MaterialTheme.typography.labelLarge
                                 )
                             }
@@ -1035,6 +1081,73 @@ fun EditPhotoScreen(
                                 )
                             }
                         }
+
+                        IconButton(
+                            onClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                activeTool = ActiveEditTool.NONE
+                            },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(Color.White.copy(alpha = 0.15f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Done",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+
+                ActiveEditTool.FILTERS -> {
+                    // Filters selection toolbar with Done button
+                    val filters = listOf(
+                        PhotoFilter.VIVID,
+                        PhotoFilter.WARM,
+                        PhotoFilter.COOL,
+                        PhotoFilter.NOIR,
+                        PhotoFilter.FADE
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            filters.forEach { filter ->
+                                val isSelected = selectedFilter == filter
+                                Surface(
+                                    onClick = {
+                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        selectedFilter = if (isSelected) PhotoFilter.NONE else filter
+                                    },
+                                    shape = RoundedCornerShape(20.dp),
+                                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.12f),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(42.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = if (filter == PhotoFilter.FADE) "Retro" else filter.displayName,
+                                            color = if (isSelected) PureBlack else Color.White,
+                                            fontSize = 13.sp,
+                                            style = MaterialTheme.typography.labelLarge
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
 
                         IconButton(
                             onClick = {
