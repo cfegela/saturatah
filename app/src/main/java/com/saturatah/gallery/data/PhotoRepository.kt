@@ -158,7 +158,9 @@ class PhotoRepository(private val context: Context) {
         cropRight: Float,
         cropBottom: Float,
         saturationLevel: Int = 0,
-        lightLevel: Int = 0
+        lightLevel: Int = 0,
+        originalPhoto: Photo? = null,
+        saveAsCopy: Boolean = false
     ): Uri? = withContext(Dispatchers.IO) {
         try {
             val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -290,29 +292,67 @@ class PhotoRepository(private val context: Context) {
                 croppedBitmap
             }
 
-            val filename = "IMG_${System.currentTimeMillis()}_edit.jpg"
-            val contentValues = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, filename)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Saturatah")
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
+            val filename = if (originalPhoto != null) {
+                if (saveAsCopy) {
+                    val originalName = originalPhoto.displayName
+                    val dotIndex = originalName.lastIndexOf('.')
+                    if (dotIndex > 0) {
+                        val base = originalName.substring(0, dotIndex)
+                        val ext = originalName.substring(dotIndex)
+                        "${base}_edit$ext"
+                    } else {
+                        "${originalName}_edit.jpg"
+                    }
+                } else {
+                    originalPhoto.displayName.ifBlank { "IMG_${System.currentTimeMillis()}_edit.jpg" }
                 }
+            } else {
+                "IMG_${System.currentTimeMillis()}_edit.jpg"
             }
 
-            val newUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-            if (newUri != null) {
-                context.contentResolver.openOutputStream(newUri)?.use { out ->
+            val tempFile = File.createTempFile("edit_", ".jpg", context.cacheDir)
+            val newUri = try {
+                tempFile.outputStream().use { out ->
                     finalBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    contentValues.clear()
-                    contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    context.contentResolver.update(newUri, contentValues, null, null)
+                if (!finalBitmap.isRecycled) {
+                    finalBitmap.recycle()
+                }
+
+                if (!saveAsCopy && originalPhoto != null) {
+                    deletePhoto(originalPhoto)
+                }
+
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/simplah")
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                }
+
+                val insertedUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                if (insertedUri != null) {
+                    context.contentResolver.openOutputStream(insertedUri)?.use { out ->
+                        tempFile.inputStream().use { input ->
+                            input.copyTo(out)
+                        }
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        contentValues.clear()
+                        contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                        context.contentResolver.update(insertedUri, contentValues, null, null)
+                    }
+                }
+                insertedUri
+            } finally {
+                tempFile.delete()
+                if (!finalBitmap.isRecycled) {
+                    finalBitmap.recycle()
                 }
             }
-            finalBitmap.recycle()
             newUri
         } catch (e: Exception) {
             Log.e("PhotoRepository", "Failed to save edited photo", e)

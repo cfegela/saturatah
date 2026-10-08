@@ -89,12 +89,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             cropRight = cropRight,
             cropBottom = cropBottom,
             saturationLevel = saturationLevel,
-            lightLevel = lightLevel
+            lightLevel = lightLevel,
+            originalPhoto = photo,
+            saveAsCopy = saveAsCopy
         )
         if (newUri != null) {
-            if (!saveAsCopy) {
-                repository.deletePhoto(photo)
-            }
             val photos = repository.loadPhotos()
             if (photos.isNotEmpty()) {
                 _uiState.value = GalleryUiState.Success(photos)
