@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -859,7 +860,7 @@ fun EditPhotoScreen(
                     // Light and Darks Steppers with Checkmark button to return to menu
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
@@ -980,6 +981,8 @@ fun EditPhotoScreen(
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.width(16.dp))
 
                         IconButton(
                             onClick = {
