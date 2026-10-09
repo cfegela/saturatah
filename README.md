@@ -1,4 +1,4 @@
-# Saturatah
+# <img src="assets/icon.png" width="40" height="40" alt="Saturatah Icon" valign="middle"> Saturatah
 
 A minimalist, high-performance photo gallery app for Android built with Jetpack Compose.
 
