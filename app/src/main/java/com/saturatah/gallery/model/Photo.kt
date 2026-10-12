@@ -12,5 +12,7 @@ data class Photo(
     val size: Long,
     val width: Int = 0,
     val height: Int = 0,
-    val filePath: String? = null
+    val filePath: String? = null,
+    val isVideo: Boolean = false,
+    val duration: Long = 0L
 )

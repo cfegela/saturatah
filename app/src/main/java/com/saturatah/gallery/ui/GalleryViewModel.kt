@@ -60,6 +60,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun startEditing(photo: Photo) {
+        if (photo.isVideo) return
         _editingPhoto.value = photo
     }
 

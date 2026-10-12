@@ -13,9 +13,12 @@ Saturatah focuses on an uncompromised, distraction-free photo viewing experience
   - Asynchronous thumbnail loading and memory caching powered by Coil.
   - Clean edge-to-edge layout with zero header distractions.
 
-- **Full-Screen Photo Viewer**:
+- **Full-Screen Media Viewer**:
   - Pure edge-to-edge viewing without distracting overlays or metadata bars.
-  - Smooth horizontal swipe navigation between photos (`HorizontalPager`).
+  - Smooth horizontal swipe navigation between photos and videos (`HorizontalPager`).
+  - Seamless video playback powered by Media3 ExoPlayer with clean, minimal Play/Pause controls.
+  - Quick share action menu to send photos and videos directly via Text (SMS/MMS) or Gmail.
+  - Non-destructive view-only video experience: editing is strictly reserved for photos to keep the app ultra-fast and lightweight.
   - Native gesture and hardware back button navigation back to the grid.
 
 - **Photo Editing Suite (Crop, Color, Light, Filters)**:
@@ -55,7 +58,8 @@ Saturatah focuses on an uncompromised, distraction-free photo viewing experience
 | **Language** | Kotlin 2.0.21 |
 | **UI Toolkit** | Jetpack Compose (Compose BOM 2024.09.03) |
 | **Design System** | Material 3 (AMOLED Dark Theme) |
-| **Image Loading** | Coil Compose 2.7.0 |
+| **Image Loading** | Coil Compose 2.7.0 (with `coil-video` frame decoding) |
+| **Video Playback** | AndroidX Media3 ExoPlayer 1.4.1 |
 | **Media & EXIF** | Android `MediaStore` ContentProvider & AndroidX `ExifInterface` |
 | **Build System** | Gradle 8.10.2 + Android Gradle Plugin 8.7.1 |
 | **Target SDK** | Android 15 (API level 35), Min SDK 26 |

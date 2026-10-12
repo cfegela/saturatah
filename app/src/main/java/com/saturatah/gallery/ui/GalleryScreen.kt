@@ -158,13 +158,13 @@ fun PermissionCard(
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "Access Photos",
+            text = "Access Photos & Videos",
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Saturatah requires storage access to display the images stored on your device.",
+            text = "Saturatah requires storage access to display the photos and videos stored on your device.",
             style = MaterialTheme.typography.bodyMedium,
             color = SubduedGray,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center

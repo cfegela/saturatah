@@ -101,6 +101,78 @@ class PhotoRepository(private val context: Context) {
             e.printStackTrace()
         }
 
+        try {
+            val videoCollection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+            val videoProjection = arrayOf(
+                MediaStore.Video.Media._ID,
+                MediaStore.Video.Media.DISPLAY_NAME,
+                MediaStore.Video.Media.DATE_ADDED,
+                MediaStore.Video.Media.DATE_MODIFIED,
+                MediaStore.Video.Media.DATE_TAKEN,
+                MediaStore.Video.Media.SIZE,
+                MediaStore.Video.Media.WIDTH,
+                MediaStore.Video.Media.HEIGHT,
+                MediaStore.Video.Media.DURATION,
+                MediaStore.Video.Media.DATA
+            )
+
+            context.contentResolver.query(
+                videoCollection,
+                videoProjection,
+                null,
+                null,
+                sortOrder
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndex(MediaStore.Video.Media._ID)
+                val nameColumn = cursor.getColumnIndex(MediaStore.Video.Media.DISPLAY_NAME)
+                val dateAddedColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATE_ADDED)
+                val dateModifiedColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATE_MODIFIED)
+                val dateTakenColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATE_TAKEN)
+                val sizeColumn = cursor.getColumnIndex(MediaStore.Video.Media.SIZE)
+                val widthColumn = cursor.getColumnIndex(MediaStore.Video.Media.WIDTH)
+                val heightColumn = cursor.getColumnIndex(MediaStore.Video.Media.HEIGHT)
+                val durationColumn = cursor.getColumnIndex(MediaStore.Video.Media.DURATION)
+                val dataColumn = cursor.getColumnIndex(MediaStore.Video.Media.DATA)
+
+                while (cursor.moveToNext()) {
+                    val id = if (idColumn >= 0) cursor.getLong(idColumn) else continue
+                    val name = if (nameColumn >= 0) cursor.getString(nameColumn) ?: "Video" else "Video"
+                    val dateAdded = if (dateAddedColumn >= 0) cursor.getLong(dateAddedColumn) else 0L
+                    val dateModified = if (dateModifiedColumn >= 0) cursor.getLong(dateModifiedColumn) else 0L
+                    val dateTaken = if (dateTakenColumn >= 0) cursor.getLong(dateTakenColumn) else 0L
+                    val size = if (sizeColumn >= 0) cursor.getLong(sizeColumn) else 0L
+                    val width = if (widthColumn >= 0) cursor.getInt(widthColumn) else 0
+                    val height = if (heightColumn >= 0) cursor.getInt(heightColumn) else 0
+                    val duration = if (durationColumn >= 0) cursor.getLong(durationColumn) else 0L
+                    val filePath = if (dataColumn >= 0) cursor.getString(dataColumn) else null
+
+                    val contentUri = ContentUris.withAppendedId(
+                        MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                        id
+                    )
+
+                    photos.add(
+                        Photo(
+                            id = id,
+                            uri = contentUri,
+                            displayName = name,
+                            dateAdded = dateAdded,
+                            dateTaken = dateTaken,
+                            dateModified = dateModified,
+                            size = size,
+                            width = width,
+                            height = height,
+                            filePath = filePath,
+                            isVideo = true,
+                            duration = duration
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
         photos.sortByDescending {
             if (it.dateTaken > 0) it.dateTaken else it.dateAdded * 1000L
         }
