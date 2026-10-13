@@ -88,4 +88,45 @@ class PhotoModelTest {
         assertEquals("fade", PhotoFilter.FADE.id)
         assertNotNull(PhotoFilter.FADE.getColorMatrix())
     }
+
+    @Test
+    fun testColorAdjustmentHelperSaturation() {
+        // Saturation level 0 should be null (no-op)
+        assertNull(com.saturatah.gallery.util.ColorAdjustmentHelper.createSaturationMatrix(0))
+
+        // B&W level -1 should produce a matrix
+        assertNotNull(com.saturatah.gallery.util.ColorAdjustmentHelper.createSaturationMatrix(-1))
+
+        // Level 5 should produce a matrix
+        assertNotNull(com.saturatah.gallery.util.ColorAdjustmentHelper.createSaturationMatrix(5))
+    }
+
+    @Test
+    fun testColorAdjustmentHelperSkinReduction() {
+        // Skin level 0 or positive should be null (only reduces)
+        assertNull(com.saturatah.gallery.util.ColorAdjustmentHelper.createSkinReductionMatrix(0))
+        assertNull(com.saturatah.gallery.util.ColorAdjustmentHelper.createSkinReductionMatrix(1))
+
+        // Negative skin levels should produce a reduction matrix
+        val matrix = com.saturatah.gallery.util.ColorAdjustmentHelper.createSkinReductionMatrix(-5)
+        assertNotNull(matrix)
+    }
+
+    @Test
+    fun testColorAdjustmentHelperCombined() {
+        // Both 0 -> null
+        assertNull(com.saturatah.gallery.util.ColorAdjustmentHelper.createColorToneMatrix(0, 0))
+
+        // Only sat -> not null
+        assertNotNull(com.saturatah.gallery.util.ColorAdjustmentHelper.createColorToneMatrix(3, 0))
+
+        // Only skin -> not null
+        assertNotNull(com.saturatah.gallery.util.ColorAdjustmentHelper.createColorToneMatrix(0, -3))
+
+        // Both active -> not null
+        assertNotNull(com.saturatah.gallery.util.ColorAdjustmentHelper.createColorToneMatrix(3, -3))
+
+        // B&W active -> pure monochrome matrix returned
+        assertNotNull(com.saturatah.gallery.util.ColorAdjustmentHelper.createColorToneMatrix(-1, -3))
+    }
 }

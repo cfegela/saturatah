@@ -18,6 +18,7 @@ import android.provider.MediaStore
 import android.util.Log
 import com.saturatah.gallery.model.Photo
 import com.saturatah.gallery.model.PhotoFilter
+import com.saturatah.gallery.util.ColorAdjustmentHelper
 import com.saturatah.gallery.util.PortraitBlurEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -254,6 +255,7 @@ class PhotoRepository(private val context: Context) {
         cropRight: Float,
         cropBottom: Float,
         saturationLevel: Int = 0,
+        skinLevel: Int = 0,
         lightLevel: Int = 0,
         darkLevel: Int = 0,
         filter: PhotoFilter = PhotoFilter.NONE,
@@ -338,28 +340,10 @@ class PhotoRepository(private val context: Context) {
             }
 
             val filterMatrix = filter.getColorMatrix()
-            val hasAdjustments = saturationLevel == -1 || saturationLevel > 0 || lightLevel > 0 || darkLevel > 0 || filterMatrix != null
+            val colorToneMatrix = ColorAdjustmentHelper.createColorToneMatrix(saturationLevel, skinLevel)
+            val hasAdjustments = colorToneMatrix != null || lightLevel > 0 || darkLevel > 0 || filterMatrix != null
 
             finalBitmap = if (hasAdjustments) {
-                val satMatrix = if (saturationLevel == -1 || saturationLevel > 0) {
-                    if (saturationLevel == -1) {
-                        ColorMatrix().apply { setSaturation(0.0f) }
-                    } else {
-                        val sr = 1.0f + saturationLevel * 0.05f
-                        val sg = 1.0f + saturationLevel * 0.20f
-                        val sb = 1.0f + saturationLevel * 0.20f
-                        val wr = 0.2126f
-                        val wg = 0.7152f
-                        val wb = 0.0722f
-                        ColorMatrix(floatArrayOf(
-                            (1f - sr) * wr + sr, (1f - sr) * wg,      (1f - sr) * wb,      0f, 0f,
-                            (1f - sg) * wr,      (1f - sg) * wg + sg, (1f - sg) * wb,      0f, 0f,
-                            (1f - sb) * wr,      (1f - sb) * wg,      (1f - sb) * wb + sb, 0f, 0f,
-                            0f,                  0f,                  0f,                  1f, 0f
-                        ))
-                    }
-                } else null
-
                 val lightMatrix = if (lightLevel > 0) {
                     val c = 1.0f + lightLevel * 0.05f
                     val t = (1.0f - c) * 35.0f
@@ -393,10 +377,10 @@ class PhotoRepository(private val context: Context) {
                 }
 
                 val adjustmentsMatrix = when {
-                    satMatrix != null && toneMatrix != null -> {
-                        ColorMatrix().apply { setConcat(toneMatrix, satMatrix) }
+                    colorToneMatrix != null && toneMatrix != null -> {
+                        ColorMatrix().apply { setConcat(toneMatrix, colorToneMatrix) }
                     }
-                    satMatrix != null -> satMatrix
+                    colorToneMatrix != null -> colorToneMatrix
                     toneMatrix != null -> toneMatrix
                     else -> null
                 }

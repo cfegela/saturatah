@@ -78,6 +78,7 @@ import androidx.compose.ui.unit.sp
 import com.saturatah.gallery.model.Photo
 import com.saturatah.gallery.model.PhotoFilter
 import com.saturatah.gallery.ui.theme.PureBlack
+import com.saturatah.gallery.util.ColorAdjustmentHelper
 import com.saturatah.gallery.util.PortraitBlurEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -104,6 +105,7 @@ fun EditPhotoScreen(
         cropRight: Float,
         cropBottom: Float,
         saturationLevel: Int,
+        skinLevel: Int,
         lightLevel: Int,
         darkLevel: Int,
         filter: PhotoFilter,
@@ -135,6 +137,7 @@ fun EditPhotoScreen(
 
     var rotationDegrees by remember { mutableIntStateOf(0) }
     var saturationLevel by remember { mutableIntStateOf(0) } // Discrete -1 (B&W), 0..10
+    var skinLevel by remember { mutableIntStateOf(0) } // Discrete -10 to 0 (reduction only)
     var lightLevel by remember { mutableIntStateOf(0) } // Discrete 0 to 10
     var darkLevel by remember { mutableIntStateOf(0) } // Discrete 0 to 10
     var selectedFilter by remember { mutableStateOf(PhotoFilter.NONE) }
@@ -187,32 +190,13 @@ fun EditPhotoScreen(
         isComputingBlur = false
     }
 
-    // Real-time GPU color filter for saturation, light, darks, and preset filters
-    val combinedColorFilter = remember(saturationLevel, lightLevel, darkLevel, selectedFilter) {
-        val hasSat = saturationLevel == -1 || saturationLevel > 0
+    // Real-time GPU color filter for saturation, skin reduction, light, darks, and preset filters
+    val combinedColorFilter = remember(saturationLevel, skinLevel, lightLevel, darkLevel, selectedFilter) {
+        val colorToneMatrix = ColorAdjustmentHelper.createColorToneMatrix(saturationLevel, skinLevel)
         val hasLight = lightLevel > 0
         val hasDark = darkLevel > 0
         val filterMatrix = selectedFilter.getColorMatrix()
-        if (!hasSat && !hasLight && !hasDark && filterMatrix == null) return@remember null
-
-        val satMatrix = if (hasSat) {
-            if (saturationLevel == -1) {
-                AndroidColorMatrix().apply { setSaturation(0.0f) }
-            } else {
-                val sr = 1.0f + saturationLevel * 0.05f
-                val sg = 1.0f + saturationLevel * 0.20f
-                val sb = 1.0f + saturationLevel * 0.20f
-                val wr = 0.2126f
-                val wg = 0.7152f
-                val wb = 0.0722f
-                AndroidColorMatrix(floatArrayOf(
-                    (1f - sr) * wr + sr, (1f - sr) * wg,      (1f - sr) * wb,      0f, 0f,
-                    (1f - sg) * wr,      (1f - sg) * wg + sg, (1f - sg) * wb,      0f, 0f,
-                    (1f - sb) * wr,      (1f - sb) * wg,      (1f - sb) * wb + sb, 0f, 0f,
-                    0f,                  0f,                  0f,                  1f, 0f
-                ))
-            }
-        } else null
+        if (colorToneMatrix == null && !hasLight && !hasDark && filterMatrix == null) return@remember null
 
         val lightMatrix = if (hasLight) {
             val c = 1.0f + lightLevel * 0.05f
@@ -247,10 +231,10 @@ fun EditPhotoScreen(
         }
 
         val adjustmentsMatrix = when {
-            satMatrix != null && toneMatrix != null -> {
-                AndroidColorMatrix().apply { setConcat(toneMatrix, satMatrix) }
+            colorToneMatrix != null && toneMatrix != null -> {
+                AndroidColorMatrix().apply { setConcat(toneMatrix, colorToneMatrix) }
             }
-            satMatrix != null -> satMatrix
+            colorToneMatrix != null -> colorToneMatrix
             toneMatrix != null -> toneMatrix
             else -> null
         }
@@ -282,6 +266,7 @@ fun EditPhotoScreen(
         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
         rotationDegrees = 0
         saturationLevel = 0
+        skinLevel = 0
         lightLevel = 0
         darkLevel = 0
         selectedFilter = PhotoFilter.NONE
@@ -302,7 +287,7 @@ fun EditPhotoScreen(
         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
 
         coroutineScope.launch {
-            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel, darkLevel, selectedFilter, blurLevel, asCopy)
+            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, skinLevel, lightLevel, darkLevel, selectedFilter, blurLevel, asCopy)
             if (success) {
                 val message = if (asCopy) "Copy saved" else "Photo saved"
                 Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -786,13 +771,14 @@ fun EditPhotoScreen(
                             }
                         }
 
+                        val hasColorAdjustments = saturationLevel != 0 || skinLevel != 0
                         Surface(
                             onClick = {
                                 hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                                 activeTool = ActiveEditTool.COLOR
                             },
                             shape = RoundedCornerShape(20.dp),
-                            color = Color.White.copy(alpha = 0.12f),
+                            color = if (hasColorAdjustments) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f),
                             modifier = Modifier.height(42.dp)
                         ) {
                             Row(
@@ -878,73 +864,136 @@ fun EditPhotoScreen(
                 }
 
                 ActiveEditTool.COLOR -> {
-                    // Color Stepper with Checkmark button to return to menu
+                    // Color and Skin Steppers with Checkmark button to return to menu
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Spacer(modifier = Modifier.size(40.dp))
-
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = Color.White.copy(alpha = 0.12f),
-                            modifier = Modifier.height(42.dp)
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier.padding(horizontal = 8.dp)
+                            // Color stepper pill (uniform saturation)
+                            Surface(
+                                shape = RoundedCornerShape(20.dp),
+                                color = Color.White.copy(alpha = 0.12f),
+                                modifier = Modifier.height(42.dp)
                             ) {
-                                IconButton(
-                                    onClick = {
-                                        if (saturationLevel > -1) {
-                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            saturationLevel--
-                                        }
-                                    },
-                                    enabled = saturationLevel > -1,
-                                    modifier = Modifier.size(32.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.padding(horizontal = 6.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Remove,
-                                        contentDescription = "Decrease color",
-                                        tint = if (saturationLevel > -1) Color.White else Color.White.copy(alpha = 0.3f),
-                                        modifier = Modifier.size(18.dp)
+                                    IconButton(
+                                        onClick = {
+                                            if (saturationLevel > -1) {
+                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                saturationLevel--
+                                            }
+                                        },
+                                        enabled = saturationLevel > -1,
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Remove,
+                                            contentDescription = "Decrease color",
+                                            tint = if (saturationLevel > -1) Color.White else Color.White.copy(alpha = 0.3f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+
+                                    Text(
+                                        text = when {
+                                            saturationLevel == -1 -> "Color: B&W"
+                                            saturationLevel == 0 -> "Color: 0"
+                                            else -> "Color: +$saturationLevel"
+                                        },
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier.padding(horizontal = 2.dp)
                                     )
+
+                                    IconButton(
+                                        onClick = {
+                                            if (saturationLevel < 10) {
+                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                saturationLevel++
+                                            }
+                                        },
+                                        enabled = saturationLevel < 10,
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = "Increase color",
+                                            tint = if (saturationLevel < 10) Color.White else Color.White.copy(alpha = 0.3f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
+                            }
 
-                                Text(
-                                    text = when {
-                                        saturationLevel == -1 -> "Color: B&W"
-                                        saturationLevel == 0 -> "Color: 0"
-                                        else -> "Color: +$saturationLevel"
-                                    },
-                                    color = Color.White,
-                                    fontSize = 14.sp,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                )
-
-                                IconButton(
-                                    onClick = {
-                                        if (saturationLevel < 10) {
-                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            saturationLevel++
-                                        }
-                                    },
-                                    enabled = saturationLevel < 10,
-                                    modifier = Modifier.size(32.dp)
+                            // Skin stepper pill (only reduces skin tone)
+                            Surface(
+                                shape = RoundedCornerShape(20.dp),
+                                color = Color.White.copy(alpha = 0.12f),
+                                modifier = Modifier.height(42.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.padding(horizontal = 6.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = "Increase color",
-                                        tint = if (saturationLevel < 10) Color.White else Color.White.copy(alpha = 0.3f),
-                                        modifier = Modifier.size(18.dp)
+                                    IconButton(
+                                        onClick = {
+                                            if (skinLevel > -10) {
+                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                skinLevel--
+                                            }
+                                        },
+                                        enabled = skinLevel > -10 && saturationLevel != -1,
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Remove,
+                                            contentDescription = "Reduce skin tone",
+                                            tint = if (skinLevel > -10 && saturationLevel != -1) Color.White else Color.White.copy(alpha = 0.3f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+
+                                    Text(
+                                        text = if (skinLevel == 0) "Skin: 0" else "Skin: $skinLevel",
+                                        color = if (saturationLevel != -1) Color.White else Color.White.copy(alpha = 0.4f),
+                                        fontSize = 13.sp,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier.padding(horizontal = 2.dp)
                                     )
+
+                                    IconButton(
+                                        onClick = {
+                                            if (skinLevel < 0) {
+                                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                skinLevel++
+                                            }
+                                        },
+                                        enabled = skinLevel < 0 && saturationLevel != -1,
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = "Restore skin tone",
+                                            tint = if (skinLevel < 0 && saturationLevel != -1) Color.White else Color.White.copy(alpha = 0.3f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.width(16.dp))
 
                         IconButton(
                             onClick = {
