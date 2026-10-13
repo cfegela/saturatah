@@ -131,7 +131,7 @@ fun GalleryApp(
             EditPhotoScreen(
                 photo = currentEditPhoto,
                 onCancel = { viewModel.cancelEditing() },
-                onSave = { rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel, darkLevel, filter, saveAsCopy ->
+                onSave = { rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel, darkLevel, filter, blurLevel, saveAsCopy ->
                     viewModel.saveEditedPhoto(
                         photo = currentEditPhoto,
                         rotationDegrees = rotationDegrees,
@@ -143,6 +143,7 @@ fun GalleryApp(
                         lightLevel = lightLevel,
                         darkLevel = darkLevel,
                         filter = filter,
+                        blurLevel = blurLevel,
                         saveAsCopy = saveAsCopy
                     )
                 },

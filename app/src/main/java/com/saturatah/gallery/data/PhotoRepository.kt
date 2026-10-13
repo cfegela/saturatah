@@ -18,6 +18,7 @@ import android.provider.MediaStore
 import android.util.Log
 import com.saturatah.gallery.model.Photo
 import com.saturatah.gallery.model.PhotoFilter
+import com.saturatah.gallery.util.PortraitBlurEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -249,6 +250,7 @@ class PhotoRepository(private val context: Context) {
         lightLevel: Int = 0,
         darkLevel: Int = 0,
         filter: PhotoFilter = PhotoFilter.NONE,
+        blurLevel: Int = 0,
         originalPhoto: Photo? = null,
         saveAsCopy: Boolean = false
     ): Uri? = withContext(Dispatchers.IO) {
@@ -318,6 +320,13 @@ class PhotoRepository(private val context: Context) {
             val croppedBitmap = Bitmap.createBitmap(orientedBitmap, pxLeft, pxTop, pxWidth, pxHeight)
             if (croppedBitmap != orientedBitmap) {
                 orientedBitmap.recycle()
+            }
+
+            // Apply portrait blur with optical bokeh
+            val blurredBitmap = if (blurLevel > 0) {
+                PortraitBlurEngine.applyPortraitBlur(croppedBitmap, blurLevel)
+            } else {
+                croppedBitmap
             }
 
             val filterMatrix = filter.getColorMatrix()
@@ -395,24 +404,24 @@ class PhotoRepository(private val context: Context) {
 
                 if (combinedMatrix != null) {
                     val adjBitmap = Bitmap.createBitmap(
-                        croppedBitmap.width,
-                        croppedBitmap.height,
-                        croppedBitmap.config ?: Bitmap.Config.ARGB_8888
+                        blurredBitmap.width,
+                        blurredBitmap.height,
+                        blurredBitmap.config ?: Bitmap.Config.ARGB_8888
                     )
                     val canvas = Canvas(adjBitmap)
                     val paint = Paint().apply {
                         colorFilter = ColorMatrixColorFilter(combinedMatrix)
                     }
-                    canvas.drawBitmap(croppedBitmap, 0f, 0f, paint)
-                    if (adjBitmap != croppedBitmap) {
-                        croppedBitmap.recycle()
+                    canvas.drawBitmap(blurredBitmap, 0f, 0f, paint)
+                    if (adjBitmap != blurredBitmap) {
+                        blurredBitmap.recycle()
                     }
                     adjBitmap
                 } else {
-                    croppedBitmap
+                    blurredBitmap
                 }
             } else {
-                croppedBitmap
+                blurredBitmap
             }
 
             val targetDateTaken = when {

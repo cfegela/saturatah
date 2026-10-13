@@ -83,6 +83,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         lightLevel: Int = 0,
         darkLevel: Int = 0,
         filter: PhotoFilter = PhotoFilter.NONE,
+        blurLevel: Int = 0,
         saveAsCopy: Boolean = false
     ): Boolean {
         val newUri = repository.saveCroppedAndRotatedPhoto(
@@ -96,6 +97,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             lightLevel = lightLevel,
             darkLevel = darkLevel,
             filter = filter,
+            blurLevel = blurLevel,
             originalPhoto = photo,
             saveAsCopy = saveAsCopy
         )

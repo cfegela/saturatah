@@ -48,6 +48,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -77,12 +78,16 @@ import androidx.compose.ui.unit.sp
 import com.saturatah.gallery.model.Photo
 import com.saturatah.gallery.model.PhotoFilter
 import com.saturatah.gallery.ui.theme.PureBlack
+import androidx.compose.material.icons.filled.BlurOn
+import com.saturatah.gallery.util.PortraitBlurEngine
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.hypot
 
 enum class ActiveEditTool {
-    NONE, COLOR, LIGHT, CROP, FILTERS
+    NONE, COLOR, LIGHT, CROP, FILTERS, BLUR
 }
 
 private enum class DragHandle {
@@ -103,6 +108,7 @@ fun EditPhotoScreen(
         lightLevel: Int,
         darkLevel: Int,
         filter: PhotoFilter,
+        blurLevel: Int,
         saveAsCopy: Boolean
     ) -> Boolean,
     loadBitmap: suspend (Photo) -> Bitmap?,
@@ -140,7 +146,19 @@ fun EditPhotoScreen(
     var cropRight by remember { mutableFloatStateOf(1f) }
     var cropBottom by remember { mutableFloatStateOf(1f) }
 
+    // Portrait blur state: level 0 = off, 1–5 = intensity
+    var blurLevel by remember { mutableIntStateOf(0) }
+    var blurredPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var isComputingBlur by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            PortraitBlurEngine.clearCache()
+        }
+    }
+
     LaunchedEffect(photo.id) {
+        PortraitBlurEngine.clearCache()
         isLoadingBitmap = true
         sourceBitmap = loadBitmap(photo)
         isLoadingBitmap = false
@@ -155,6 +173,19 @@ fun EditPhotoScreen(
             val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
             Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
         }
+    }
+
+    // Recompute portrait blur whenever the source or intensity changes
+    LaunchedEffect(displayedBitmap, blurLevel) {
+        if (blurLevel == 0 || displayedBitmap == null) {
+            blurredPreviewBitmap = null
+            return@LaunchedEffect
+        }
+        isComputingBlur = true
+        blurredPreviewBitmap = withContext(Dispatchers.Default) {
+            PortraitBlurEngine.applyPortraitBlur(displayedBitmap, blurLevel)
+        }
+        isComputingBlur = false
     }
 
     // Real-time GPU color filter for saturation, light, darks, and preset filters
@@ -255,6 +286,9 @@ fun EditPhotoScreen(
         lightLevel = 0
         darkLevel = 0
         selectedFilter = PhotoFilter.NONE
+        blurLevel = 0
+        blurredPreviewBitmap = null
+        PortraitBlurEngine.clearCache()
         cropLeft = 0f
         cropTop = 0f
         cropRight = 1f
@@ -269,7 +303,7 @@ fun EditPhotoScreen(
         hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
 
         coroutineScope.launch {
-            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel, darkLevel, selectedFilter, asCopy)
+            val success = onSave(rotationDegrees, cropLeft, cropTop, cropRight, cropBottom, saturationLevel, lightLevel, darkLevel, selectedFilter, blurLevel, asCopy)
             if (success) {
                 val message = if (asCopy) "Copy saved" else "Photo saved"
                 Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -554,10 +588,22 @@ fun EditPhotoScreen(
                     }
 
                     Canvas(modifier = canvasModifier) {
+                        // Use blurred composite if available, otherwise fall back to original
+                        val activeBitmap = if (blurLevel > 0 && blurredPreviewBitmap != null) {
+                            blurredPreviewBitmap!!
+                        } else {
+                            bmp
+                        }
+                        val activeComposeBitmap = if (blurLevel > 0 && blurredPreviewBitmap != null) {
+                            blurredPreviewBitmap!!.asImageBitmap()
+                        } else {
+                            composeBitmap
+                        }
+
                         if (activeTool == ActiveEditTool.CROP) {
                             // In CROP mode: draw full image with interactive crop overlay
                             drawImage(
-                                image = composeBitmap,
+                                image = activeComposeBitmap,
                                 dstOffset = IntOffset(imgOffsetX.toInt(), imgOffsetY.toInt()),
                                 dstSize = IntSize(imgDisplayW.toInt(), imgDisplayH.toInt()),
                                 colorFilter = combinedColorFilter
@@ -652,11 +698,11 @@ fun EditPhotoScreen(
                             drawLine(cornerColor, Offset(cRight, cBottom), Offset(cRight - cornerLen, cBottom), cornerStroke)
                             drawLine(cornerColor, Offset(cRight, cBottom), Offset(cRight, cBottom - cornerLen), cornerStroke)
                         } else {
-                            // In NONE or COLOR mode: draw cropped image cleanly fitted
-                            val srcL = (cropLeft * bmp.width).toInt().coerceIn(0, bmp.width - 1)
-                            val srcT = (cropTop * bmp.height).toInt().coerceIn(0, bmp.height - 1)
-                            val srcR = (cropRight * bmp.width).toInt().coerceIn(srcL + 1, bmp.width)
-                            val srcB = (cropBottom * bmp.height).toInt().coerceIn(srcT + 1, bmp.height)
+                            // In NONE / COLOR / BLUR etc.: draw cropped image cleanly fitted
+                            val srcL = (cropLeft * activeBitmap.width).toInt().coerceIn(0, activeBitmap.width - 1)
+                            val srcT = (cropTop * activeBitmap.height).toInt().coerceIn(0, activeBitmap.height - 1)
+                            val srcR = (cropRight * activeBitmap.width).toInt().coerceIn(srcL + 1, activeBitmap.width)
+                            val srcB = (cropBottom * activeBitmap.height).toInt().coerceIn(srcT + 1, activeBitmap.height)
                             val srcW = srcR - srcL
                             val srcH = srcB - srcT
 
@@ -667,12 +713,26 @@ fun EditPhotoScreen(
                             val offY = (viewHeightPx - dispH) / 2f
 
                             drawImage(
-                                image = composeBitmap,
+                                image = activeComposeBitmap,
                                 srcOffset = IntOffset(srcL, srcT),
                                 srcSize = IntSize(srcW, srcH),
                                 dstOffset = IntOffset(offX.toInt(), offY.toInt()),
                                 dstSize = IntSize(dispW.toInt(), dispH.toInt()),
                                 colorFilter = combinedColorFilter
+                            )
+                        }
+                    }
+
+                    // Blur computing overlay — shows while ML Kit is running
+                    if (isComputingBlur) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(36.dp)
                             )
                         }
                     }
@@ -691,10 +751,12 @@ fun EditPhotoScreen(
         ) {
             when (activeTool) {
                 ActiveEditTool.NONE -> {
-                    // Main Menu Bar: Crop, Color, Light, and Filters buttons
+                    // Main Menu Bar: Crop, Color, Light, Filters, and Blur buttons
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
@@ -806,6 +868,37 @@ fun EditPhotoScreen(
                                 )
                                 Text(
                                     text = "Filters",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+
+                        // Blur button — highlighted when blur is active
+                        val blurActive = blurLevel > 0
+                        Surface(
+                            onClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                activeTool = ActiveEditTool.BLUR
+                            },
+                            shape = RoundedCornerShape(20.dp),
+                            color = if (blurActive) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f),
+                            modifier = Modifier.height(42.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.BlurOn,
+                                    contentDescription = "Blur",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Blur",
                                     color = Color.White,
                                     fontSize = 13.sp,
                                     style = MaterialTheme.typography.labelLarge
@@ -1147,6 +1240,89 @@ fun EditPhotoScreen(
                         }
 
                         Spacer(modifier = Modifier.width(12.dp))
+
+                        IconButton(
+                            onClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                activeTool = ActiveEditTool.NONE
+                            },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(Color.White.copy(alpha = 0.15f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Done",
+                                tint = Color.White
+                            )
+                        }
+                    }
+                }
+
+                ActiveEditTool.BLUR -> {
+                    // Portrait Blur stepper with Checkmark button to return to menu
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Spacer(modifier = Modifier.size(40.dp))
+
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White.copy(alpha = 0.12f),
+                            modifier = Modifier.height(42.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        if (blurLevel > 0) {
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            blurLevel--
+                                        }
+                                    },
+                                    enabled = blurLevel > 0,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Remove,
+                                        contentDescription = "Decrease blur",
+                                        tint = if (blurLevel > 0) Color.White else Color.White.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+
+                                Text(
+                                    text = if (blurLevel == 0) "Portrait Blur: Off" else "Portrait Blur: +$blurLevel",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                )
+
+                                IconButton(
+                                    onClick = {
+                                        if (blurLevel < 5) {
+                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            blurLevel++
+                                        }
+                                    },
+                                    enabled = blurLevel < 5,
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = "Increase blur",
+                                        tint = if (blurLevel < 5) Color.White else Color.White.copy(alpha = 0.3f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
 
                         IconButton(
                             onClick = {

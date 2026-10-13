@@ -60,6 +60,9 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-video:2.7.0")
 
+    // ML Kit Subject Segmentation for portrait background blur
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
+
     // Media3 ExoPlayer for video playback
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
