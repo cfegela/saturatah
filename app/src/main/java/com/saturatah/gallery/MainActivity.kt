@@ -19,13 +19,20 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import com.saturatah.gallery.ui.EditPhotoScreen
 import com.saturatah.gallery.ui.GalleryScreen
 import com.saturatah.gallery.ui.GalleryUiState
@@ -158,6 +165,9 @@ fun GalleryApp(
     val selectedPhotoIndex by viewModel.selectedPhotoIndex.collectAsState()
     val editingPhoto by viewModel.editingPhoto.collectAsState()
 
+    val gridState = rememberLazyGridState()
+    var pendingScrollIndex by remember { mutableStateOf<Int?>(null) }
+
     AnimatedContent(
         targetState = Triple(selectedPhotoIndex, editingPhoto != null, uiState is GalleryUiState.Success),
         transitionSpec = {
@@ -193,13 +203,37 @@ fun GalleryApp(
             PhotoDetailScreen(
                 photos = photos,
                 initialIndex = selectedIndex,
-                onBack = { viewModel.clearSelection() },
+                onBack = { lastViewedIndex ->
+                    if (lastViewedIndex != selectedIndex) {
+                        pendingScrollIndex = lastViewedIndex
+                    }
+                    viewModel.clearSelection()
+                },
                 onDeletePhoto = { photo -> viewModel.deletePhoto(photo) },
                 onEditPhoto = { photo -> viewModel.startEditing(photo) }
             )
         } else {
+            LaunchedEffect(pendingScrollIndex) {
+                val target = pendingScrollIndex ?: return@LaunchedEffect
+                snapshotFlow { gridState.layoutInfo.totalItemsCount }
+                    .filter { it > 0 }
+                    .first()
+
+                val visibleItem = gridState.layoutInfo.visibleItemsInfo.find { it.index == target }
+                val viewportHeight = gridState.layoutInfo.viewportSize.height
+                val isFullyVisible = visibleItem != null &&
+                    visibleItem.offset.y >= 0 &&
+                    (visibleItem.offset.y + visibleItem.size.height) <= viewportHeight
+
+                if (!isFullyVisible) {
+                    gridState.scrollToItem(target)
+                }
+                pendingScrollIndex = null
+            }
+
             GalleryScreen(
                 uiState = uiState,
+                gridState = gridState,
                 onRequestPermission = onRequestPermission,
                 onRefresh = { viewModel.loadPhotos() },
                 onPhotoClick = { index ->

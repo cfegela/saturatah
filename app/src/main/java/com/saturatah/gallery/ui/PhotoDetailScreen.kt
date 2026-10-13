@@ -80,13 +80,11 @@ private const val TAG = "PhotoDetailScreen"
 fun PhotoDetailScreen(
     photos: List<Photo>,
     initialIndex: Int,
-    onBack: () -> Unit,
+    onBack: (Int) -> Unit,
     onDeletePhoto: suspend (Photo) -> Boolean,
     modifier: Modifier = Modifier,
     onEditPhoto: (Photo) -> Unit = {}
 ) {
-    BackHandler(onBack = onBack)
-
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val hapticFeedback = LocalHapticFeedback.current
@@ -95,6 +93,10 @@ fun PhotoDetailScreen(
         initialPage = initialIndex.coerceIn(0, (photos.size - 1).coerceAtLeast(0)),
         pageCount = { photos.size }
     )
+
+    BackHandler(onBack = {
+        onBack(pagerState.currentPage)
+    })
 
     var isDeleting by remember { mutableStateOf(false) }
     val currentPhoto = photos.getOrNull(pagerState.currentPage)
@@ -165,7 +167,7 @@ fun PhotoDetailScreen(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             IconButton(
-                onClick = onBack,
+                onClick = { onBack(pagerState.currentPage) },
                 modifier = Modifier
                     .size(40.dp)
                     .background(Color.Black.copy(alpha = 0.5f), CircleShape)

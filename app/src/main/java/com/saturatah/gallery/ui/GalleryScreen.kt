@@ -15,8 +15,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -51,7 +53,8 @@ fun GalleryScreen(
     onRequestPermission: () -> Unit,
     onRefresh: () -> Unit,
     onPhotoClick: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    gridState: LazyGridState = rememberLazyGridState()
 ) {
     Box(
         modifier = modifier
@@ -86,7 +89,8 @@ fun GalleryScreen(
             is GalleryUiState.Success -> {
                 PhotoGrid(
                     photos = uiState.photos,
-                    onPhotoClick = onPhotoClick
+                    onPhotoClick = onPhotoClick,
+                    gridState = gridState
                 )
             }
         }
@@ -97,10 +101,12 @@ fun GalleryScreen(
 fun PhotoGrid(
     photos: List<Photo>,
     onPhotoClick: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    gridState: LazyGridState = rememberLazyGridState()
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(3),
+        state = gridState,
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(1.dp),
         horizontalArrangement = Arrangement.spacedBy(1.5.dp),
