@@ -78,7 +78,6 @@ import androidx.compose.ui.unit.sp
 import com.saturatah.gallery.model.Photo
 import com.saturatah.gallery.model.PhotoFilter
 import com.saturatah.gallery.ui.theme.PureBlack
-import androidx.compose.material.icons.filled.BlurOn
 import com.saturatah.gallery.util.PortraitBlurEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -87,7 +86,7 @@ import kotlin.math.abs
 import kotlin.math.hypot
 
 enum class ActiveEditTool {
-    NONE, COLOR, LIGHT, CROP, FILTERS, BLUR
+    NONE, COLOR, LIGHT, CROP, FILTERS
 }
 
 private enum class DragHandle {
@@ -751,12 +750,10 @@ fun EditPhotoScreen(
         ) {
             when (activeTool) {
                 ActiveEditTool.NONE -> {
-                    // Main Menu Bar: Crop, Color, Light, Filters, and Blur buttons
+                    // Main Menu Bar: Crop, Color, Light, and Filters buttons
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
@@ -846,13 +843,15 @@ fun EditPhotoScreen(
                             }
                         }
 
+                        // Filters button — highlighted if either a color filter or blur is active
+                        val hasFilterOrBlur = selectedFilter != PhotoFilter.NONE || blurLevel > 0
                         Surface(
                             onClick = {
                                 hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                                 activeTool = ActiveEditTool.FILTERS
                             },
                             shape = RoundedCornerShape(20.dp),
-                            color = Color.White.copy(alpha = 0.12f),
+                            color = if (hasFilterOrBlur) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f),
                             modifier = Modifier.height(42.dp)
                         ) {
                             Row(
@@ -868,37 +867,6 @@ fun EditPhotoScreen(
                                 )
                                 Text(
                                     text = "Filters",
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                            }
-                        }
-
-                        // Blur button — highlighted when blur is active
-                        val blurActive = blurLevel > 0
-                        Surface(
-                            onClick = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                activeTool = ActiveEditTool.BLUR
-                            },
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (blurActive) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.12f),
-                            modifier = Modifier.height(42.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.BlurOn,
-                                    contentDescription = "Blur",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    text = "Blur",
                                     color = Color.White,
                                     fontSize = 13.sp,
                                     style = MaterialTheme.typography.labelLarge
@@ -1194,13 +1162,15 @@ fun EditPhotoScreen(
                 }
 
                 ActiveEditTool.FILTERS -> {
-                    // Filters selection toolbar with Done button
+                    // Filters & Blur selection toolbar with Done button
                     val filters = listOf(
                         PhotoFilter.WARM,
                         PhotoFilter.COOL,
                         PhotoFilter.NOIR,
                         PhotoFilter.FADE
                     )
+                    val isBlurActive = blurLevel > 0
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1208,7 +1178,7 @@ fun EditPhotoScreen(
                     ) {
                         Row(
                             modifier = Modifier.weight(1f),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             filters.forEach { filter ->
@@ -1231,98 +1201,44 @@ fun EditPhotoScreen(
                                         Text(
                                             text = if (filter == PhotoFilter.FADE) "Retro" else filter.displayName,
                                             color = if (isSelected) PureBlack else Color.White,
-                                            fontSize = 13.sp,
-                                            style = MaterialTheme.typography.labelLarge
+                                            fontSize = 12.sp,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            style = MaterialTheme.typography.labelMedium
                                         )
                                     }
                                 }
                             }
-                        }
 
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        IconButton(
-                            onClick = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                activeTool = ActiveEditTool.NONE
-                            },
-                            modifier = Modifier
-                                .size(40.dp)
-                                .background(Color.White.copy(alpha = 0.15f), CircleShape)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Done",
-                                tint = Color.White
-                            )
-                        }
-                    }
-                }
-
-                ActiveEditTool.BLUR -> {
-                    // Portrait Blur stepper with Checkmark button to return to menu
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Spacer(modifier = Modifier.size(40.dp))
-
-                        Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = Color.White.copy(alpha = 0.12f),
-                            modifier = Modifier.height(42.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                modifier = Modifier.padding(horizontal = 8.dp)
+                            // Blur toggle button — positioned to the right of Retro
+                            Surface(
+                                onClick = {
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    blurLevel = if (blurLevel > 0) 0 else 1
+                                },
+                                shape = RoundedCornerShape(20.dp),
+                                color = if (isBlurActive) Color.White else Color.White.copy(alpha = 0.12f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
                             ) {
-                                IconButton(
-                                    onClick = {
-                                        if (blurLevel > 0) {
-                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            blurLevel--
-                                        }
-                                    },
-                                    enabled = blurLevel > 0,
-                                    modifier = Modifier.size(32.dp)
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Remove,
-                                        contentDescription = "Decrease blur",
-                                        tint = if (blurLevel > 0) Color.White else Color.White.copy(alpha = 0.3f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                Text(
-                                    text = if (blurLevel == 0) "Portrait Blur: Off" else "Portrait Blur: +$blurLevel",
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    modifier = Modifier.padding(horizontal = 4.dp)
-                                )
-
-                                IconButton(
-                                    onClick = {
-                                        if (blurLevel < 5) {
-                                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            blurLevel++
-                                        }
-                                    },
-                                    enabled = blurLevel < 5,
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Add,
-                                        contentDescription = "Increase blur",
-                                        tint = if (blurLevel < 5) Color.White else Color.White.copy(alpha = 0.3f),
-                                        modifier = Modifier.size(18.dp)
+                                    Text(
+                                        text = "Blur",
+                                        color = if (isBlurActive) PureBlack else Color.White,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        style = MaterialTheme.typography.labelMedium
                                     )
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.width(8.dp))
 
                         IconButton(
                             onClick = {
