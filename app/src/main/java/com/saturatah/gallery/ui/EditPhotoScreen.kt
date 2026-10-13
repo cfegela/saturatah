@@ -7,6 +7,8 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +40,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -71,6 +74,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -152,6 +156,9 @@ fun EditPhotoScreen(
     var blurLevel by remember { mutableIntStateOf(0) }
     var blurredPreviewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isComputingBlur by remember { mutableStateOf(false) }
+
+    // Press-and-hold to view unedited original photo
+    var isComparingOriginal by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -277,6 +284,7 @@ fun EditPhotoScreen(
         cropTop = 0f
         cropRight = 1f
         cropBottom = 1f
+        isComparingOriginal = false
         activeTool = ActiveEditTool.NONE
     }
 
@@ -472,6 +480,18 @@ fun EditPhotoScreen(
                     val touchRadius = with(density) { 36.dp.toPx() }
                     var activeHandle by remember { mutableStateOf(DragHandle.NONE) }
 
+                    val hasVisualEdits = saturationLevel != 0 ||
+                        skinLevel != 0 ||
+                        lightLevel > 0 ||
+                        darkLevel > 0 ||
+                        selectedFilter != PhotoFilter.NONE ||
+                        blurLevel > 0
+
+                    val hasCropOrRotateEdits = rotationDegrees % 360 != 0 ||
+                        cropLeft > 0f || cropTop > 0f || cropRight < 1f || cropBottom < 1f
+
+                    val hasAnyEdits = hasVisualEdits || hasCropOrRotateEdits
+
                     val canvasModifier = if (activeTool == ActiveEditTool.CROP) {
                         Modifier
                             .fillMaxSize()
@@ -568,22 +588,41 @@ fun EditPhotoScreen(
                                     }
                                 )
                             }
+                    } else if (hasAnyEdits) {
+                        Modifier
+                            .fillMaxSize()
+                            .pointerInput(hasAnyEdits) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false)
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    isComparingOriginal = true
+                                    try {
+                                        do {
+                                            val event = awaitPointerEvent()
+                                        } while (event.changes.any { it.pressed })
+                                    } finally {
+                                        isComparingOriginal = false
+                                    }
+                                }
+                            }
                     } else {
                         Modifier.fillMaxSize()
                     }
 
                     Canvas(modifier = canvasModifier) {
-                        // Use blurred composite if available, otherwise fall back to original
-                        val activeBitmap = if (blurLevel > 0 && blurredPreviewBitmap != null) {
+                        // Use blurred composite if available and not currently comparing with original
+                        val activeBitmap = if (!isComparingOriginal && blurLevel > 0 && blurredPreviewBitmap != null) {
                             blurredPreviewBitmap!!
                         } else {
                             bmp
                         }
-                        val activeComposeBitmap = if (blurLevel > 0 && blurredComposeBitmap != null) {
+                        val activeComposeBitmap = if (!isComparingOriginal && blurLevel > 0 && blurredComposeBitmap != null) {
                             blurredComposeBitmap
                         } else {
                             composeBitmap
                         }
+
+                        val effectiveColorFilter = if (isComparingOriginal) null else combinedColorFilter
 
                         if (activeTool == ActiveEditTool.CROP) {
                             // In CROP mode: draw full image with interactive crop overlay
@@ -591,7 +630,7 @@ fun EditPhotoScreen(
                                 image = activeComposeBitmap,
                                 dstOffset = IntOffset(imgOffsetX.toInt(), imgOffsetY.toInt()),
                                 dstSize = IntSize(imgDisplayW.toInt(), imgDisplayH.toInt()),
-                                colorFilter = combinedColorFilter
+                                colorFilter = effectiveColorFilter
                             )
 
                             val cLeft = imgOffsetX + cropLeft * imgDisplayW
@@ -684,10 +723,17 @@ fun EditPhotoScreen(
                             drawLine(cornerColor, Offset(cRight, cBottom), Offset(cRight, cBottom - cornerLen), cornerStroke)
                         } else {
                             // In NONE / COLOR / BLUR etc.: draw cropped image cleanly fitted
-                            val srcL = (cropLeft * activeBitmap.width).toInt().coerceIn(0, activeBitmap.width - 1)
-                            val srcT = (cropTop * activeBitmap.height).toInt().coerceIn(0, activeBitmap.height - 1)
-                            val srcR = (cropRight * activeBitmap.width).toInt().coerceIn(srcL + 1, activeBitmap.width)
-                            val srcB = (cropBottom * activeBitmap.height).toInt().coerceIn(srcT + 1, activeBitmap.height)
+                            // If comparing original and only crop/rotate was modified, show full uncropped frame
+                            val compareShowsUncropped = isComparingOriginal && !hasVisualEdits && hasCropOrRotateEdits
+                            val effCropL = if (compareShowsUncropped) 0f else cropLeft
+                            val effCropT = if (compareShowsUncropped) 0f else cropTop
+                            val effCropR = if (compareShowsUncropped) 1f else cropRight
+                            val effCropB = if (compareShowsUncropped) 1f else cropBottom
+
+                            val srcL = (effCropL * activeBitmap.width).toInt().coerceIn(0, activeBitmap.width - 1)
+                            val srcT = (effCropT * activeBitmap.height).toInt().coerceIn(0, activeBitmap.height - 1)
+                            val srcR = (effCropR * activeBitmap.width).toInt().coerceIn(srcL + 1, activeBitmap.width)
+                            val srcB = (effCropB * activeBitmap.height).toInt().coerceIn(srcT + 1, activeBitmap.height)
                             val srcW = srcR - srcL
                             val srcH = srcB - srcT
 
@@ -703,8 +749,40 @@ fun EditPhotoScreen(
                                 srcSize = IntSize(srcW, srcH),
                                 dstOffset = IntOffset(offX.toInt(), offY.toInt()),
                                 dstSize = IntSize(dispW.toInt(), dispH.toInt()),
-                                colorFilter = combinedColorFilter
+                                colorFilter = effectiveColorFilter
                             )
+                        }
+                    }
+
+                    // "ORIGINAL" indicator pill — displays at the top center while pressing on the photo
+                    if (isComparingOriginal) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color.Black.copy(alpha = 0.72f),
+                            shadowElevation = 4.dp,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 16.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Visibility,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "ORIGINAL",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = 1.2.sp
+                                )
+                            }
                         }
                     }
 
