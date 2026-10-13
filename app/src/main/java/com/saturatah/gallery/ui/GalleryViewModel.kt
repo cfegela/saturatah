@@ -72,6 +72,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         return repository.loadPreviewBitmap(photo.uri)
     }
 
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     suspend fun saveEditedPhoto(
         photo: Photo,
         rotationDegrees: Int,
@@ -102,6 +103,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             saveAsCopy = saveAsCopy
         )
         if (newUri != null) {
+            val app = getApplication<Application>()
+            val imageLoader = coil.Coil.imageLoader(app)
+            imageLoader.memoryCache?.clear()
+            imageLoader.diskCache?.clear()
+
             val photos = repository.loadPhotos()
             if (photos.isNotEmpty()) {
                 _uiState.value = GalleryUiState.Success(photos)

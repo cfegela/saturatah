@@ -124,6 +124,7 @@ fun PhotoDetailScreen(
         // Horizontal swiping pager
         HorizontalPager(
             state = pagerState,
+            key = { page -> photos.getOrNull(page)?.let { "${it.id}_${it.dateModified}" } ?: page },
             modifier = Modifier.fillMaxSize()
         ) { page ->
             val photo = photos[page]
@@ -141,6 +142,9 @@ fun PhotoDetailScreen(
                     AsyncImage(
                         model = ImageRequest.Builder(context)
                             .data(photo.uri)
+                            .memoryCacheKey("${photo.uri}_${photo.dateModified}")
+                            .diskCacheKey("${photo.uri}_${photo.dateModified}")
+                            .setParameter("date_modified", photo.dateModified, memoryCacheKey = "${photo.uri}_${photo.dateModified}")
                             .crossfade(true)
                             .build(),
                         contentDescription = photo.displayName,

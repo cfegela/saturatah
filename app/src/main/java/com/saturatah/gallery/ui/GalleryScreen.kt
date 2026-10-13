@@ -108,7 +108,7 @@ fun PhotoGrid(
     ) {
         itemsIndexed(
             items = photos,
-            key = { _, photo -> photo.id }
+            key = { _, photo -> "${photo.id}_${photo.dateModified}" }
         ) { index, photo ->
             PhotoThumbnailItem(
                 photo = photo,
@@ -135,6 +135,9 @@ fun PhotoThumbnailItem(
         AsyncImage(
             model = ImageRequest.Builder(context)
                 .data(photo.uri)
+                .memoryCacheKey("${photo.uri}_${photo.dateModified}")
+                .diskCacheKey("${photo.uri}_${photo.dateModified}")
+                .setParameter("date_modified", photo.dateModified, memoryCacheKey = "${photo.uri}_${photo.dateModified}")
                 .crossfade(true)
                 .build(),
             contentDescription = photo.displayName,

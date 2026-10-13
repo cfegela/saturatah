@@ -434,12 +434,8 @@ class PhotoRepository(private val context: Context) {
                 originalPhoto != null && originalPhoto.dateAdded > 0 -> originalPhoto.dateAdded * 1000L
                 else -> System.currentTimeMillis()
             }
-            val targetDateModified = when {
-                originalPhoto != null && originalPhoto.dateModified > 0 -> originalPhoto.dateModified
-                originalPhoto != null && originalPhoto.dateTaken > 0 -> originalPhoto.dateTaken / 1000L
-                originalPhoto != null && originalPhoto.dateAdded > 0 -> originalPhoto.dateAdded
-                else -> System.currentTimeMillis() / 1000L
-            }
+            // Date modified must be the current time so MediaStore and image loaders detect the update
+            val targetDateModified = System.currentTimeMillis() / 1000L
 
             val filename = if (originalPhoto != null) {
                 if (saveAsCopy) {
@@ -524,73 +520,40 @@ class PhotoRepository(private val context: Context) {
 
                 tempFile.setLastModified(targetDateModified * 1000L)
 
-                var savedUri: Uri? = null
-
-                // For in-place save, attempt writing directly to the source URI first
                 if (!saveAsCopy && originalPhoto != null) {
-                    try {
-                        context.contentResolver.openOutputStream(originalPhoto.uri, "wt")?.use { out ->
-                            tempFile.inputStream().use { input ->
-                                input.copyTo(out)
-                            }
-                            savedUri = originalPhoto.uri
-                        }
-                        if (savedUri != null) {
-                            val updateValues = ContentValues().apply {
-                                put(MediaStore.Images.Media.DATE_MODIFIED, targetDateModified)
-                                put(MediaStore.Images.Media.SIZE, tempFile.length())
-                            }
-                            context.contentResolver.update(originalPhoto.uri, updateValues, null, null)
-                        }
-                    } catch (e: Exception) {
-                        Log.w("PhotoRepository", "Direct overwrite of original URI failed, fallback to new entry: ${e.message}")
-                        savedUri = null
+                    deletePhoto(originalPhoto)
+                }
+
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    put(MediaStore.Images.Media.DATE_TAKEN, targetDateTaken)
+                    put(MediaStore.Images.Media.DATE_MODIFIED, targetDateModified)
+                    if (originalPhoto != null && originalPhoto.dateAdded > 0) {
+                        put(MediaStore.Images.Media.DATE_ADDED, originalPhoto.dateAdded)
+                    } else {
+                        put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/simplah")
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
                     }
                 }
 
-                // If not saved in-place or if saving as copy, insert a new MediaStore record
-                if (savedUri == null) {
-                    val contentValues = ContentValues().apply {
-                        put(MediaStore.Images.Media.DISPLAY_NAME, filename)
-                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                        put(MediaStore.Images.Media.DATE_TAKEN, targetDateTaken)
-                        put(MediaStore.Images.Media.DATE_MODIFIED, targetDateModified)
-                        if (originalPhoto != null && originalPhoto.dateAdded > 0) {
-                            put(MediaStore.Images.Media.DATE_ADDED, originalPhoto.dateAdded)
-                        } else {
-                            put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Saturatah")
-                            put(MediaStore.Images.Media.IS_PENDING, 1)
+                val insertedUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                if (insertedUri != null) {
+                    context.contentResolver.openOutputStream(insertedUri)?.use { out ->
+                        tempFile.inputStream().use { input ->
+                            input.copyTo(out)
                         }
                     }
-
-                    val insertedUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-                    if (insertedUri != null) {
-                        context.contentResolver.openOutputStream(insertedUri)?.use { out ->
-                            tempFile.inputStream().use { input ->
-                                input.copyTo(out)
-                            }
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            contentValues.clear()
-                            contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
-                            context.contentResolver.update(insertedUri, contentValues, null, null)
-                        }
-                        savedUri = insertedUri
-
-                        // If user chose non-copy and direct overwrite was not permitted, remove original
-                        if (!saveAsCopy && originalPhoto != null) {
-                            try {
-                                deletePhoto(originalPhoto)
-                            } catch (e: Exception) {
-                                Log.w("PhotoRepository", "Could not remove original after inserting new record", e)
-                            }
-                        }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        contentValues.clear()
+                        contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                        context.contentResolver.update(insertedUri, contentValues, null, null)
                     }
                 }
-                savedUri
+                insertedUri
             } finally {
                 tempFile.delete()
             }
@@ -633,10 +596,29 @@ class PhotoRepository(private val context: Context) {
 
         try {
             val count = context.contentResolver.delete(photo.uri, null, null)
-            count > 0 || fileRemoved
+            if (count > 0 || fileRemoved) {
+                if (fileRemoved && count <= 0 && !photo.filePath.isNullOrEmpty()) {
+                    android.media.MediaScannerConnection.scanFile(
+                        context,
+                        arrayOf(photo.filePath),
+                        null,
+                        null
+                    )
+                }
+                return@withContext true
+            }
         } catch (e: Exception) {
             Log.e("PhotoRepository", "ContentResolver deletion exception", e)
-            fileRemoved
         }
+
+        if (fileRemoved && !photo.filePath.isNullOrEmpty()) {
+            android.media.MediaScannerConnection.scanFile(
+                context,
+                arrayOf(photo.filePath),
+                null,
+                null
+            )
+        }
+        fileRemoved
     }
 }
