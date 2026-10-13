@@ -460,6 +460,7 @@ fun EditPhotoScreen(
             } else {
                 val bmp = displayedBitmap
                 val composeBitmap = remember(bmp) { bmp.asImageBitmap() }
+                val blurredComposeBitmap = remember(blurredPreviewBitmap) { blurredPreviewBitmap?.asImageBitmap() }
 
                 BoxWithConstraints(
                     modifier = Modifier.fillMaxSize(),
@@ -593,8 +594,8 @@ fun EditPhotoScreen(
                         } else {
                             bmp
                         }
-                        val activeComposeBitmap = if (blurLevel > 0 && blurredPreviewBitmap != null) {
-                            blurredPreviewBitmap!!.asImageBitmap()
+                        val activeComposeBitmap = if (blurLevel > 0 && blurredComposeBitmap != null) {
+                            blurredComposeBitmap
                         } else {
                             composeBitmap
                         }

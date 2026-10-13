@@ -114,6 +114,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         return false
     }
 
+    suspend fun deletePhoto(photo: Photo): Boolean {
+        val deleted = repository.deletePhoto(photo)
+        if (deleted) {
+            onPhotoDeleted(photo)
+        }
+        return deleted
+    }
+
     fun onPhotoDeleted(photo: Photo) {
         val current = _uiState.value
         if (current is GalleryUiState.Success) {

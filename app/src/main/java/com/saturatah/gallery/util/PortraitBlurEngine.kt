@@ -23,11 +23,9 @@ import kotlin.math.max
 /**
  * Natural, realistic portrait background blur engine.
  *
- * Designed to look like genuine optical lens depth-of-field:
- * - Does not over-blur or turn the background into abstract mush.
- * - Creates optical depth falloff (near background is gently softened, far background has richer bokeh).
- * - Soft feathered subject edges with zero jagged artifacts or cut-out halos.
- * - Thread-safe with Mutex; completely avoids manual .recycle() calls to eliminate race conditions.
+ * Uses ML Kit Subject Segmentation to produce pristine subject matting,
+ * combined with high-quality optical bokeh background blur.
+ * Thread-safe, leak-free, and properly cleans up native ML Kit resources.
  */
 object PortraitBlurEngine {
 
@@ -72,7 +70,7 @@ object PortraitBlurEngine {
                     val procW = (targetW * scale).toInt().coerceAtLeast(64)
                     val procH = (targetH * scale).toInt().coerceAtLeast(64)
 
-                    // 2. Obtain or reuse the feathered subject mask (at procW x procH)
+                    // 2. Obtain or reuse the pristine subject mask (at procW x procH)
                     val maskBitmap = getOrComputeMask(bitmap, procW, procH) ?: run {
                         Log.w(TAG, "No subject detected or segmentation unavailable; returning original")
                         return@withLock bitmap
@@ -82,12 +80,21 @@ object PortraitBlurEngine {
 
                     // 3. Synthesize natural optical bokeh on downscaled background
                     val downscaledBg = Bitmap.createScaledBitmap(bitmap, procW, procH, true)
-                    val depthBlurredBg = renderDepthBlurredBackground(downscaledBg, maskBitmap, blurLevel)
+                    val depthBlurredBg = renderDepthBlurredBackground(downscaledBg, blurLevel)
+
+                    if (downscaledBg !== bitmap && !downscaledBg.isRecycled) {
+                        downscaledBg.recycle()
+                    }
 
                     if (depthBlurredBg.isRecycled || bitmap.isRecycled) return@withLock bitmap
 
                     // 4. Composite: Sharp full-resolution subject over smoothly upscaled bokeh background
                     val output = compositeFullResolution(bitmap, depthBlurredBg, maskBitmap)
+
+                    if (depthBlurredBg !== bitmap && !depthBlurredBg.isRecycled) {
+                        depthBlurredBg.recycle()
+                    }
+
                     output
                 } catch (e: Throwable) {
                     Log.e(TAG, "Failed applying portrait blur", e)
@@ -101,6 +108,11 @@ object PortraitBlurEngine {
      */
     fun clearCache() {
         cachedSourceRef = null
+        cachedMaskBitmap?.let {
+            if (!it.isRecycled) {
+                it.recycle()
+            }
+        }
         cachedMaskBitmap = null
     }
 
@@ -122,13 +134,22 @@ object PortraitBlurEngine {
         }
 
         val rawConfidenceBuffer = runMLKitSegmentation(segInput)
+        if (segInput !== sourceBitmap && !segInput.isRecycled) {
+            segInput.recycle()
+        }
+
         if (rawConfidenceBuffer == null) return null
 
-        // Convert confidence buffer to an ARGB mask Bitmap with smooth edge curve
+        // Convert confidence buffer to an ARGB mask Bitmap with smooth S-curve
+        // Preserves the full, crisp fidelity of ML Kit segmentation without post-blur erosion
         val mask = createMaskBitmap(rawConfidenceBuffer, procW, procH)
 
-        // Feather the mask slightly (radius 2 at 512px) to eliminate hard edges/halos
-        StackBlur.blurInPlace(mask, 2)
+        // Clean up previous cached mask if different
+        cachedMaskBitmap?.let {
+            if (it !== mask && !it.isRecycled) {
+                it.recycle()
+            }
+        }
 
         // Cache for subsequent slider changes
         cachedMaskBitmap = mask
@@ -138,7 +159,7 @@ object PortraitBlurEngine {
     }
 
     /**
-     * Runs ML Kit Subject Segmentation synchronously on the background thread.
+     * Runs ML Kit Subject Segmentation synchronously on the background thread and safely closes client.
      */
     private fun runMLKitSegmentation(inputBitmap: Bitmap): FloatBuffer? {
         return try {
@@ -146,9 +167,13 @@ object PortraitBlurEngine {
                 .enableForegroundConfidenceMask()
                 .build()
             val segmenter = SubjectSegmentation.getClient(options)
-            val inputImage = InputImage.fromBitmap(inputBitmap, 0)
-            val result = Tasks.await(segmenter.process(inputImage))
-            result.foregroundConfidenceMask
+            try {
+                val inputImage = InputImage.fromBitmap(inputBitmap, 0)
+                val result = Tasks.await(segmenter.process(inputImage))
+                result.foregroundConfidenceMask
+            } finally {
+                segmenter.close()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "ML Kit Subject Segmentation processing failed", e)
             null
@@ -158,7 +183,7 @@ object PortraitBlurEngine {
     /**
      * Builds an ARGB_8888 mask Bitmap where alpha encodes foreground confidence.
      * Uses a subtle S-curve to clean up noisy low-confidence background pixels
-     * while retaining smooth feathered edge transitions.
+     * while retaining smooth photographic edge transitions.
      */
     private fun createMaskBitmap(buffer: FloatBuffer, width: Int, height: Int): Bitmap {
         buffer.rewind()
@@ -189,81 +214,23 @@ object PortraitBlurEngine {
     }
 
     /**
-     * Creates an optical bokeh background with depth falloff.
-     *
-     * Near background (close to subject) receives lighter blur.
-     * Far background receives full bokeh blur.
+     * Creates rich optical bokeh background blur.
      */
     private fun renderDepthBlurredBackground(
         bgBitmap: Bitmap,
-        maskBitmap: Bitmap,
         blurLevel: Int
     ): Bitmap {
-        // Blur radii calibrated for natural photographic appearance at ~512px
-        val (nearRadius, farRadius) = when (blurLevel) {
-            1 -> Pair(2, 4)      // Equivalent to subtle lens falloff (~f/4)
-            2 -> Pair(3, 7)      // Gentle portrait bokeh (~f/2.8)
-            3 -> Pair(5, 11)     // Classic portrait bokeh (~f/2.0)
-            4 -> Pair(7, 16)     // Shallow depth-of-field (~f/1.4)
-            else -> Pair(9, 22)  // Rich, dreamy bokeh
+        val blurRadius = when (blurLevel) {
+            1 -> 4       // Subtle depth softening
+            2 -> 7       // Gentle portrait bokeh
+            3 -> 11      // Classic portrait bokeh
+            4 -> 16      // Shallow depth-of-field
+            else -> 22   // Rich, dreamy bokeh
         }
 
-        val w = bgBitmap.width
-        val h = bgBitmap.height
-
-        // 1. Far blur (full bokeh)
-        val farBg = bgBitmap.copy(Bitmap.Config.ARGB_8888, true)
-        StackBlur.blurInPlace(farBg, farRadius)
-
-        // 2. Near blur (subtle softening)
-        val nearBg = bgBitmap.copy(Bitmap.Config.ARGB_8888, true)
-        StackBlur.blurInPlace(nearBg, nearRadius)
-
-        // 3. Proximity gradient: blur the mask heavily to identify pixels adjacent to subject
-        val proximityMask = maskBitmap.copy(Bitmap.Config.ARGB_8888, true)
-        StackBlur.blurInPlace(proximityMask, 16)
-
-        // 4. Blend nearBg and farBg based on proximity to the subject
-        val farPix = IntArray(w * h)
-        val nearPix = IntArray(w * h)
-        val proxPix = IntArray(w * h)
-
-        farBg.getPixels(farPix, 0, w, 0, 0, w, h)
-        nearBg.getPixels(nearPix, 0, w, 0, 0, w, h)
-        proximityMask.getPixels(proxPix, 0, w, 0, 0, w, h)
-
-        val blendedPix = IntArray(w * h)
-        for (i in blendedPix.indices) {
-            val proxAlpha = (proxPix[i] ushr 24) and 0xff
-            val t = (proxAlpha / 255f).coerceIn(0f, 1f)
-
-            if (t <= 0.01f) {
-                blendedPix[i] = farPix[i]
-            } else if (t >= 0.99f) {
-                blendedPix[i] = nearPix[i]
-            } else {
-                val fP = farPix[i]
-                val nP = nearPix[i]
-
-                val fR = (fP shr 16) and 0xff
-                val fG = (fP shr 8) and 0xff
-                val fB = fP and 0xff
-
-                val nR = (nP shr 16) and 0xff
-                val nG = (nP shr 8) and 0xff
-                val nB = nP and 0xff
-
-                val r = (fR + (nR - fR) * t).toInt().coerceIn(0, 255)
-                val g = (fG + (nG - fG) * t).toInt().coerceIn(0, 255)
-                val b = (fB + (nB - fB) * t).toInt().coerceIn(0, 255)
-
-                blendedPix[i] = -0x1000000 or (r shl 16) or (g shl 8) or b
-            }
-        }
-
-        val resultBg = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        resultBg.setPixels(blendedPix, 0, w, 0, 0, w, h)
-        return resultBg
+        val blurredBg = bgBitmap.copy(Bitmap.Config.ARGB_8888, true)
+        StackBlur.blurInPlace(blurredBg, blurRadius, blurAlpha = false)
+        return blurredBg
     }
 
     /**

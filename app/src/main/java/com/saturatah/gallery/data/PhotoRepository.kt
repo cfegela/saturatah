@@ -10,7 +10,7 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
-import android.media.ExifInterface
+import androidx.exifinterface.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -22,7 +22,6 @@ import com.saturatah.gallery.util.PortraitBlurEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -32,7 +31,11 @@ class PhotoRepository(private val context: Context) {
     @Suppress("DEPRECATION")
     suspend fun loadPhotos(): List<Photo> = withContext(Dispatchers.IO) {
         val photos = mutableListOf<Photo>()
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        } else {
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+        }
 
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
@@ -99,11 +102,15 @@ class PhotoRepository(private val context: Context) {
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("PhotoRepository", "Failed querying images", e)
         }
 
         try {
-            val videoCollection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+            val videoCollection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+            } else {
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            }
             val videoProjection = arrayOf(
                 MediaStore.Video.Media._ID,
                 MediaStore.Video.Media.DISPLAY_NAME,
@@ -171,7 +178,7 @@ class PhotoRepository(private val context: Context) {
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("PhotoRepository", "Failed querying videos", e)
         }
 
         photos.sortByDescending {
@@ -254,15 +261,23 @@ class PhotoRepository(private val context: Context) {
         originalPhoto: Photo? = null,
         saveAsCopy: Boolean = false
     ): Uri? = withContext(Dispatchers.IO) {
+        var baseBitmap: Bitmap? = null
+        var orientedBitmap: Bitmap? = null
+        var croppedBitmap: Bitmap? = null
+        var blurredBitmap: Bitmap? = null
+        var finalBitmap: Bitmap? = null
+
         try {
             val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(sourceUri)?.use { stream ->
                 BitmapFactory.decodeStream(stream, null, boundsOptions)
             }
 
+            // Cap maximum resolution to 4096px to prevent Out-of-Memory on multi-megapixel photos
+            val maxOutputDimension = 4096
             var inSampleSize = 1
             val maxSide = maxOf(boundsOptions.outWidth, boundsOptions.outHeight)
-            while (maxSide / inSampleSize > 8192) {
+            while (maxSide / inSampleSize > maxOutputDimension) {
                 inSampleSize *= 2
             }
 
@@ -271,7 +286,7 @@ class PhotoRepository(private val context: Context) {
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
 
-            val baseBitmap = context.contentResolver.openInputStream(sourceUri)?.use { stream ->
+            baseBitmap = context.contentResolver.openInputStream(sourceUri)?.use { stream ->
                 BitmapFactory.decodeStream(stream, null, decodeOptions)
             } ?: return@withContext null
 
@@ -296,13 +311,9 @@ class PhotoRepository(private val context: Context) {
 
             val totalDegrees = (exifDegrees + rotationDegrees) % 360
 
-            val orientedBitmap = if (totalDegrees != 0) {
+            orientedBitmap = if (totalDegrees != 0) {
                 val matrix = Matrix().apply { postRotate(totalDegrees.toFloat()) }
-                val rotated = Bitmap.createBitmap(baseBitmap, 0, 0, baseBitmap.width, baseBitmap.height, matrix, true)
-                if (rotated != baseBitmap) {
-                    baseBitmap.recycle()
-                }
-                rotated
+                Bitmap.createBitmap(baseBitmap, 0, 0, baseBitmap.width, baseBitmap.height, matrix, true)
             } else {
                 baseBitmap
             }
@@ -317,13 +328,10 @@ class PhotoRepository(private val context: Context) {
             val pxWidth = ((clampedR - clampedL) * orientedBitmap.width).toInt().coerceIn(1, orientedBitmap.width - pxLeft)
             val pxHeight = ((clampedB - clampedT) * orientedBitmap.height).toInt().coerceIn(1, orientedBitmap.height - pxTop)
 
-            val croppedBitmap = Bitmap.createBitmap(orientedBitmap, pxLeft, pxTop, pxWidth, pxHeight)
-            if (croppedBitmap != orientedBitmap) {
-                orientedBitmap.recycle()
-            }
+            croppedBitmap = Bitmap.createBitmap(orientedBitmap, pxLeft, pxTop, pxWidth, pxHeight)
 
             // Apply portrait blur with optical bokeh
-            val blurredBitmap = if (blurLevel > 0) {
+            blurredBitmap = if (blurLevel > 0) {
                 PortraitBlurEngine.applyPortraitBlur(croppedBitmap, blurLevel)
             } else {
                 croppedBitmap
@@ -332,7 +340,7 @@ class PhotoRepository(private val context: Context) {
             val filterMatrix = filter.getColorMatrix()
             val hasAdjustments = saturationLevel == -1 || saturationLevel > 0 || lightLevel > 0 || darkLevel > 0 || filterMatrix != null
 
-            val finalBitmap = if (hasAdjustments) {
+            finalBitmap = if (hasAdjustments) {
                 val satMatrix = if (saturationLevel == -1 || saturationLevel > 0) {
                     if (saturationLevel == -1) {
                         ColorMatrix().apply { setSaturation(0.0f) }
@@ -413,9 +421,6 @@ class PhotoRepository(private val context: Context) {
                         colorFilter = ColorMatrixColorFilter(combinedMatrix)
                     }
                     canvas.drawBitmap(blurredBitmap, 0f, 0f, paint)
-                    if (adjBitmap != blurredBitmap) {
-                        blurredBitmap.recycle()
-                    }
                     adjBitmap
                 } else {
                     blurredBitmap
@@ -458,9 +463,6 @@ class PhotoRepository(private val context: Context) {
             val newUri = try {
                 tempFile.outputStream().use { out ->
                     finalBitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                }
-                if (!finalBitmap.isRecycled) {
-                    finalBitmap.recycle()
                 }
 
                 // Preserve EXIF metadata and capture timestamps from source
@@ -522,50 +524,97 @@ class PhotoRepository(private val context: Context) {
 
                 tempFile.setLastModified(targetDateModified * 1000L)
 
+                var savedUri: Uri? = null
+
+                // For in-place save, attempt writing directly to the source URI first
                 if (!saveAsCopy && originalPhoto != null) {
-                    deletePhoto(originalPhoto)
+                    try {
+                        context.contentResolver.openOutputStream(originalPhoto.uri, "wt")?.use { out ->
+                            tempFile.inputStream().use { input ->
+                                input.copyTo(out)
+                            }
+                            savedUri = originalPhoto.uri
+                        }
+                        if (savedUri != null) {
+                            val updateValues = ContentValues().apply {
+                                put(MediaStore.Images.Media.DATE_MODIFIED, targetDateModified)
+                                put(MediaStore.Images.Media.SIZE, tempFile.length())
+                            }
+                            context.contentResolver.update(originalPhoto.uri, updateValues, null, null)
+                        }
+                    } catch (e: Exception) {
+                        Log.w("PhotoRepository", "Direct overwrite of original URI failed, fallback to new entry: ${e.message}")
+                        savedUri = null
+                    }
                 }
 
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.Images.Media.DISPLAY_NAME, filename)
-                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                    put(MediaStore.Images.Media.DATE_TAKEN, targetDateTaken)
-                    put(MediaStore.Images.Media.DATE_MODIFIED, targetDateModified)
-                    if (originalPhoto != null && originalPhoto.dateAdded > 0) {
-                        put(MediaStore.Images.Media.DATE_ADDED, originalPhoto.dateAdded)
-                    } else {
-                        put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
-                    }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/simplah")
-                        put(MediaStore.Images.Media.IS_PENDING, 1)
-                    }
-                }
-
-                val insertedUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-                if (insertedUri != null) {
-                    context.contentResolver.openOutputStream(insertedUri)?.use { out ->
-                        tempFile.inputStream().use { input ->
-                            input.copyTo(out)
+                // If not saved in-place or if saving as copy, insert a new MediaStore record
+                if (savedUri == null) {
+                    val contentValues = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                        put(MediaStore.Images.Media.DATE_TAKEN, targetDateTaken)
+                        put(MediaStore.Images.Media.DATE_MODIFIED, targetDateModified)
+                        if (originalPhoto != null && originalPhoto.dateAdded > 0) {
+                            put(MediaStore.Images.Media.DATE_ADDED, originalPhoto.dateAdded)
+                        } else {
+                            put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Saturatah")
+                            put(MediaStore.Images.Media.IS_PENDING, 1)
                         }
                     }
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        contentValues.clear()
-                        contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
-                        context.contentResolver.update(insertedUri, contentValues, null, null)
+
+                    val insertedUri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                    if (insertedUri != null) {
+                        context.contentResolver.openOutputStream(insertedUri)?.use { out ->
+                            tempFile.inputStream().use { input ->
+                                input.copyTo(out)
+                            }
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            contentValues.clear()
+                            contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                            context.contentResolver.update(insertedUri, contentValues, null, null)
+                        }
+                        savedUri = insertedUri
+
+                        // If user chose non-copy and direct overwrite was not permitted, remove original
+                        if (!saveAsCopy && originalPhoto != null) {
+                            try {
+                                deletePhoto(originalPhoto)
+                            } catch (e: Exception) {
+                                Log.w("PhotoRepository", "Could not remove original after inserting new record", e)
+                            }
+                        }
                     }
                 }
-                insertedUri
+                savedUri
             } finally {
                 tempFile.delete()
-                if (!finalBitmap.isRecycled) {
-                    finalBitmap.recycle()
-                }
             }
             newUri
         } catch (e: Exception) {
             Log.e("PhotoRepository", "Failed to save edited photo", e)
             null
+        } finally {
+            // Clean up and recycle all intermediate bitmaps safely
+            if (finalBitmap != null && !finalBitmap.isRecycled && finalBitmap !== blurredBitmap && finalBitmap !== croppedBitmap && finalBitmap !== orientedBitmap && finalBitmap !== baseBitmap) {
+                finalBitmap.recycle()
+            }
+            if (blurredBitmap != null && !blurredBitmap.isRecycled && blurredBitmap !== croppedBitmap && blurredBitmap !== orientedBitmap && blurredBitmap !== baseBitmap) {
+                blurredBitmap.recycle()
+            }
+            if (croppedBitmap != null && !croppedBitmap.isRecycled && croppedBitmap !== orientedBitmap && croppedBitmap !== baseBitmap) {
+                croppedBitmap.recycle()
+            }
+            if (orientedBitmap != null && !orientedBitmap.isRecycled && orientedBitmap !== baseBitmap) {
+                orientedBitmap.recycle()
+            }
+            if (baseBitmap != null && !baseBitmap.isRecycled) {
+                baseBitmap.recycle()
+            }
         }
     }
 

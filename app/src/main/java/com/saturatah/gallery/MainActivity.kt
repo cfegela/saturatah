@@ -37,7 +37,12 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val granted = permissions.values.any { it }
+        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions[Manifest.permission.READ_MEDIA_IMAGES] == true ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && permissions[Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED] == true)
+        } else {
+            permissions[Manifest.permission.READ_EXTERNAL_STORAGE] == true
+        }
         if (granted) {
             viewModel.onPermissionGranted()
         } else {
@@ -95,9 +100,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun hasPhotoPermission(): Boolean {
-        val permissions = getRequiredPermissions()
-        return permissions.any {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED ||
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED)
+        } else {
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
         }
     }
 
@@ -155,7 +162,7 @@ fun GalleryApp(
                 photos = photos,
                 initialIndex = selectedIndex,
                 onBack = { viewModel.clearSelection() },
-                onPhotoDeleted = { photo -> viewModel.onPhotoDeleted(photo) },
+                onDeletePhoto = { photo -> viewModel.deletePhoto(photo) },
                 onEditPhoto = { photo -> viewModel.startEditing(photo) }
             )
         } else {
